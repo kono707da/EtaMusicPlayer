@@ -681,19 +681,32 @@ def vote_work_tag(payload: VotePayload, db: Session = Depends(get_db)) -> dict:
 
 # ===== 节点信息（local_node） =====
 
-def _get_local_node_token() -> Optional[str]:
+def _list_local_watch_dirs() -> list[dict]:
+    """直接查询 local_node 数据库获取监控目录列表。
+
+    同进程内直接读 DB，避免 HTTP 自调用带来的 token/端口/超时等失败点。
+    """
     try:
-        from app.security import create_access_token
         from app.plugins.local_node.database import SessionLocal as LocalSession
-        from app.plugins.local_node.models import User as LocalUser
+        from app.plugins.local_node.models import WatchDir as LocalWatchDir
     except ImportError:
-        return None
+        return []
     db_local = LocalSession()
     try:
-        admin = db_local.query(LocalUser).filter(LocalUser.username == "admin").one_or_none()
-        if admin is None:
-            return None
-        return create_access_token(admin.id)
+        wds = db_local.query(LocalWatchDir).order_by(LocalWatchDir.id).all()
+        return [
+            {
+                "id": wd.id,
+                "path": wd.path,
+                "recursive": wd.recursive,
+                "enabled": wd.enabled,
+                "last_scanned_at": wd.last_scanned_at.isoformat() if wd.last_scanned_at else None,
+                "created_at": wd.created_at.isoformat() if wd.created_at else None,
+            }
+            for wd in wds
+        ]
+    except Exception:
+        return []
     finally:
         db_local.close()
 
@@ -712,34 +725,19 @@ def list_target_nodes(db: Session = Depends(get_db)) -> dict:
 
     nodes: list[dict] = []
     if "local_node" in _loaded_in_process:
-        token = _get_local_node_token()
-        if token:
-            # 列出 watch_dirs
-            try:
-                import requests as _r
-
-                resp = _r.get(
-                    "http://127.0.0.1:8000/local_node/api/watch-dirs",
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=10,
-                )
-                if resp.status_code == 200:
-                    watch_dirs = resp.json()
-                else:
-                    watch_dirs = []
-            except Exception:
-                watch_dirs = []
-            nodes.append(
-                {
-                    "type": "local_node",
-                    "id": "local_node",
-                    "name": "本地节点",
-                    "base_url": "/local_node",
-                    "writable": True,
-                    "watch_dirs": watch_dirs,
-                    "reason": "",
-                }
-            )
+        # 同进程直接查 DB，不再走 HTTP 自调用
+        watch_dirs = _list_local_watch_dirs()
+        nodes.append(
+            {
+                "type": "local_node",
+                "id": "local_node",
+                "name": "本地节点",
+                "base_url": "/local_node",
+                "writable": True,
+                "watch_dirs": watch_dirs,
+                "reason": "",
+            }
+        )
     return {"nodes": nodes, "supported_types": ["local_node"]}
 
 
@@ -754,6 +752,10 @@ class DownloadCreate(BaseModel):
     subdir: Optional[str] = None  # 覆盖默认 subdir；空=用设置中的默认值
     selected_paths: Optional[list[str]] = None  # 空=下载全部
     files: list[dict]  # [{path, url, size, duration, type, title}, ...]
+    # 元数据：下载完成后回写到音频文件标签
+    # album / artist / album_artist 由前端从作品详情推导后传入
+    # cover_type: main / sam / 240x240 / None（不嵌入封面）
+    metadata: Optional[dict] = None
 
 
 @router.post("/downloads", status_code=201)
@@ -774,6 +776,7 @@ def create_download(
         files_json=payload.files,
         selected_paths=payload.selected_paths or [],
         total_files=len(payload.files),
+        metadata_json=payload.metadata or None,
     )
     db.add(task)
     db.commit()
@@ -830,6 +833,49 @@ def delete_download(task_id: int, db: Session = Depends(get_db)):
     db.commit()
 
 
+class CoverApplyRequest(BaseModel):
+    """给已完成的下载任务补/换封面"""
+    cover_type: str = Field(..., pattern="^(main|sam|240x240)$")
+
+
+@router.post("/downloads/{task_id}/apply-cover")
+def apply_cover(
+    task_id: int,
+    payload: CoverApplyRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """对已完成的下载任务，重新拉取指定封面并嵌入到所有音频文件。
+
+    用于下载时未选封面、或想更换封面的场景。
+    """
+    from app.plugins.asmr_one.downloader import _apply_metadata_and_cover
+
+    task = db.get(DownloadTask, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if task.status not in ("completed", "partial"):
+        raise HTTPException(status_code=400, detail="任务未完成，无法应用封面")
+
+    settings = _get_settings_dict(db)
+    proxy = settings.get("proxy_url") or "http://127.0.0.1:7897"
+    client = AsmrClient(proxy_url=proxy)
+
+    # 更新 metadata 的 cover_type，重置 cover_applied，再调 _apply_metadata_and_cover
+    meta = task.metadata_json or {}
+    meta["cover_type"] = payload.cover_type
+    task.metadata_json = meta
+    task.cover_applied = False
+    db.commit()
+
+    _apply_metadata_and_cover(db, task, client)
+
+    return {
+        "task_id": task_id,
+        "cover_applied": task.cover_applied,
+        "cover_type": payload.cover_type,
+    }
+
+
 # ===== 输出辅助 =====
 
 def _task_to_dict(
@@ -852,6 +898,8 @@ def _task_to_dict(
         "current_file_size": task.current_file_size,
         "current_file_done": task.current_file_done,
         "error_message": task.error_message,
+        "metadata": task.metadata_json,
+        "cover_applied": task.cover_applied,
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         "finished_at": task.finished_at.isoformat() if task.finished_at else None,

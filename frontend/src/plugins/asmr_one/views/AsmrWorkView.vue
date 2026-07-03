@@ -20,12 +20,14 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Empty } from '@/components/ui/empty'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription
 } from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/toast/use-toast'
 import FileTree from '../components/FileTree.vue'
+import CoverPickerDialog from '@/components/CoverPickerDialog.vue'
 import WorkCard from '../components/WorkCard.vue'
 import {
   coverUrl,
@@ -66,6 +68,14 @@ const selectedWatchDirId = ref(null)
 
 // 提交中
 const submitting = ref(false)
+
+// 下载选项：是否嵌入封面
+const embedCover = ref(true)
+const selectedCoverType = ref('main')  // main / sam / 240x240
+
+// 下载完成后的封面选择器（给已完成的任务换封面）
+const coverPickerOpen = ref(false)
+const coverPickerTaskId = ref(null)
 
 // 文件预览
 const previewFile = ref(null)      // { node, fullPath, type }
@@ -181,7 +191,7 @@ async function loadTargetNodes() {
       if (wds.length > 0) selectedWatchDirId.value = wds[0].id
     }
   } catch (e) {
-    // 静默失败
+    console.error('加载目标节点失败:', e)
   }
 }
 
@@ -203,14 +213,24 @@ async function submitDownload() {
   }
   submitting.value = true
   try {
+    // 推导元数据：专辑=作品标题，艺术家=声优名（逗号分隔），专辑艺术家=社团名
+    const w = work.value || {}
+    const artist = (w.vas || []).map((v) => v.name).filter(Boolean).join(', ') || ''
+    const metadata = {
+      album: w.title || '',
+      artist: artist,
+      album_artist: w.name || '',
+      cover_type: embedCover.value ? selectedCoverType.value : null
+    }
     const payload = {
-      work_id: work.value.id,
-      work_title: work.value.title,
-      source_id: work.value.source_id,
+      work_id: w.id,
+      work_title: w.title,
+      source_id: w.source_id,
       target_node_id: selectedNodeId.value,
       watch_dir_id: selectedWatchDirId.value,
       selected_paths: Array.from(selectedPaths.value),
-      files: selectedFiles.value
+      files: selectedFiles.value,
+      metadata
     }
     const task = await createDownload(payload)
     toast.success(`已创建下载任务 #${task.id}（${selectedFiles.value.length} 个文件）`)
@@ -592,6 +612,56 @@ function openNeighbor(id) {
             </div>
           </div>
 
+          <!-- 元数据预览：自动填充专辑/艺术家 -->
+          <div class="rounded-md bg-secondary/40 p-2.5 text-xs space-y-1">
+            <div class="text-muted-foreground mb-1">下载后将自动写入以下标签：</div>
+            <div class="flex justify-between gap-2">
+              <span class="text-muted-foreground shrink-0">专辑</span>
+              <span class="text-foreground truncate" :title="work?.title">{{ work?.title || '—' }}</span>
+            </div>
+            <div class="flex justify-between gap-2">
+              <span class="text-muted-foreground shrink-0">艺术家</span>
+              <span class="text-foreground truncate" :title="(work?.vas || []).map(v => v.name).join(', ')">
+                {{ (work?.vas || []).map(v => v.name).join(', ') || '—' }}
+              </span>
+            </div>
+            <div class="flex justify-between gap-2">
+              <span class="text-muted-foreground shrink-0">专辑艺术家</span>
+              <span class="text-foreground truncate" :title="work?.name">{{ work?.name || '—' }}</span>
+            </div>
+          </div>
+
+          <!-- 封面选择 -->
+          <div class="rounded-md border border-border p-2.5 space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="text-xs text-muted-foreground">嵌入封面到音频文件</label>
+              <Switch v-model:checked="embedCover" />
+            </div>
+            <div v-if="embedCover" class="grid grid-cols-3 gap-2">
+              <button
+                v-for="t in [{v:'main',l:'主封面'},{v:'sam',l:'小图'},{v:'240x240',l:'240'}]"
+                :key="t.v"
+                type="button"
+                class="relative rounded border-2 overflow-hidden aspect-square"
+                :class="selectedCoverType === t.v
+                  ? 'border-primary'
+                  : 'border-transparent hover:border-border'"
+                @click="selectedCoverType = t.v"
+              >
+                <img
+                  v-if="work"
+                  :src="coverUrl(work.id, t.v)"
+                  :alt="t.l"
+                  class="h-full w-full object-cover"
+                  loading="lazy"
+                />
+                <span class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] py-0.5 text-center">
+                  {{ t.l }}
+                </span>
+              </button>
+            </div>
+          </div>
+
           <Button
             variant="gold"
             :disabled="submitting || selectedFiles.length === 0 || !selectedWatchDirId"
@@ -606,7 +676,7 @@ function openNeighbor(id) {
             文件将下载到：<br />
             <code class="text-foreground">{{ watchDirs.find(w => w.id === selectedWatchDirId)?.path || '...' }}/{ASMR 子目录}/{{ work.title || '作品名' }}/...</code>
             <br /><br />
-            下载完成后会自动触发扫描入库。
+            下载完成后会自动写入标签并触发扫描入库。
           </p>
         </div>
       </div>

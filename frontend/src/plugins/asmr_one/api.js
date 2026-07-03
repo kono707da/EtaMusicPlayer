@@ -247,3 +247,10 @@ export async function cancelDownload(taskId) {
 export async function deleteDownload(taskId) {
   await client.delete(`/api/asmr/downloads/${taskId}`)
 }
+
+export async function applyCover(taskId, coverType) {
+  const r = await client.post(`/api/asmr/downloads/${taskId}/apply-cover`, {
+    cover_type: coverType
+  }, { timeout: 120000 })
+  return r.data
+}

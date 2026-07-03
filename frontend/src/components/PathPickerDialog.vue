@@ -119,7 +119,7 @@ function onCancel() {
       </div>
 
       <!-- 目录列表 -->
-      <div class="border border-border rounded-md h-80 overflow-y-auto">
+      <div class="border border-border rounded-md h-80 overflow-y-auto contain-content">
         <div v-if="loading" class="flex items-center justify-center h-full">
           <Loader2 class="h-5 w-5 animate-spin text-primary" />
         </div>
@@ -127,9 +127,9 @@ function onCancel() {
           <li
             v-for="entry in entries"
             :key="entry.path"
+            v-memo="[entry.path]"
             class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent text-sm"
             @click="onClickEntry(entry)"
-            @dblclick="onClickEntry(entry)"
           >
             <Folder class="h-4 w-4 text-primary shrink-0" />
             <span class="truncate">{{ entry.name }}</span>

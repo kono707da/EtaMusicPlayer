@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.plugins.asmr_one.database import Base
@@ -54,6 +54,12 @@ class DownloadTask(Base):
     current_file_done: Mapped[int] = mapped_column(Integer, default=0)
 
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # 元数据：下载完成后回写到音频文件标签
+    # {album, artist, album_artist, cover_type}
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # 封面是否已写入文件
+    cover_applied: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

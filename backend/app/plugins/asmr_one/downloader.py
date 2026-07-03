@@ -24,6 +24,11 @@ from sqlalchemy.orm import Session
 from app.plugins.asmr_one.asmr_client import AsmrClient
 from app.plugins.asmr_one.database import SessionLocal
 from app.plugins.asmr_one.models import DownloadFileStatus, DownloadTask
+from app.plugins.asmr_one.tag_writer import (
+    AUDIO_EXTS,
+    write_cover_to_file,
+    write_metadata_to_file,
+)
 
 logger = logging.getLogger("etamusic.plugins.asmr_one")
 
@@ -58,29 +63,6 @@ def _build_target_path(
     return Path(*parts)
 
 
-def _get_local_node_token() -> Optional[str]:
-    """获取 local_node 的 admin token（与 /api/plugins/local-node/status 同逻辑）"""
-    try:
-        from app.plugins_manager.models import Plugin
-        from app.plugins_manager.routers import _loaded_in_process
-        from app.security import create_access_token
-        from app.plugins.local_node.database import (
-            SessionLocal as LocalSession,
-        )
-        from app.plugins.local_node.models import User as LocalUser
-    except ImportError:
-        return None
-
-    db_local = LocalSession()
-    try:
-        admin = db_local.query(LocalUser).filter(LocalUser.username == "admin").one_or_none()
-        if admin is None:
-            return None
-        return create_access_token(admin.id)
-    finally:
-        db_local.close()
-
-
 def _get_watch_dir_path(watch_dir_id: int) -> Optional[str]:
     """通过 local_node API 查询监控目录绝对路径"""
     try:
@@ -97,21 +79,35 @@ def _get_watch_dir_path(watch_dir_id: int) -> Optional[str]:
         db_local.close()
 
 
-def _trigger_local_node_scan(token: str) -> bool:
-    """调用 local_node 的 /api/scan 触发扫描"""
-    import requests
-
+def _trigger_local_node_scan() -> bool:
+    """直接调用 local_node 的 run_scan 触发扫描（同进程，避免 HTTP 自调用）"""
     try:
-        r = requests.post(
-            "http://127.0.0.1:8000/local_node/api/scan",
-            json={},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=300,
-        )
-        return r.status_code in (200, 201)
+        from app.plugins.local_node.database import SessionLocal as LocalSession
+        from app.plugins.local_node.models import ScanTask
+        from app.plugins.local_node.scanner import run_scan
+    except ImportError as e:
+        logger.warning("无法导入 local_node 扫描模块: %s", e)
+        return False
+
+    db_local = LocalSession()
+    try:
+        task = ScanTask(status="pending", started_at=datetime.utcnow())
+        db_local.add(task)
+        db_local.commit()
+        db_local.refresh(task)
+        task_id = task.id
+        db_local.close()
+
+        run_scan(task_id, watch_dir_id=None)
+        return True
     except Exception as e:
         logger.warning("触发 local_node 扫描失败: %s", e)
         return False
+    finally:
+        try:
+            db_local.close()
+        except Exception:
+            pass
 
 
 def _download_one(
@@ -150,6 +146,76 @@ def _download_one(
                 on_progress(done, total)
     os.replace(tmp, target)
     return done
+
+
+def _apply_metadata_and_cover(db: Session, task: DownloadTask, client: AsmrClient) -> None:
+    """下载完成后：把专辑/艺术家等元数据与封面回写到音频文件标签。
+
+    metadata_json 结构：
+      {album, artist, album_artist, cover_type}
+    cover_type 取值：main / sam / 240x240，None 表示不写封面
+    """
+    meta = task.metadata_json or {}
+    if not meta:
+        return
+
+    album = meta.get("album")
+    artist = meta.get("artist")
+    album_artist = meta.get("album_artist")
+    cover_type = meta.get("cover_type")  # None 表示不嵌入封面
+
+    # 取出所有已下载完成的文件
+    file_statuses = (
+        db.query(DownloadFileStatus)
+        .filter(
+            DownloadFileStatus.task_id == task.id,
+            DownloadFileStatus.status.in_(["completed", "skipped"]),
+            DownloadFileStatus.saved_to.isnot(None),
+        )
+        .all()
+    )
+
+    # 仅处理音频文件
+    audio_files = [
+        fs for fs in file_statuses
+        if fs.saved_to and Path(fs.saved_to).suffix.lower() in AUDIO_EXTS
+    ]
+
+    if not audio_files:
+        return
+
+    # 1. 回写元数据（专辑 / 艺术家 / 专辑艺术家）
+    if album or artist or album_artist:
+        for fs in audio_files:
+            try:
+                write_metadata_to_file(
+                    fs.saved_to,
+                    title=None,  # 不覆盖单文件标题（保留原文件名）
+                    artist=artist,
+                    album=album,
+                    album_artist=album_artist,
+                )
+            except Exception as e:
+                logger.warning("回写元数据失败 %s: %s", fs.saved_to, e)
+        logger.info("任务 %s: 已为 %d 个音频文件回写元数据", task.id, len(audio_files))
+
+    # 2. 回写封面
+    if cover_type and not task.cover_applied:
+        try:
+            cover_bytes = client.get_cover_bytes(task.work_id, cover_type=cover_type)
+            mime = "image/jpeg"  # asmr.one cover API 返回 jpeg
+            ok_count = 0
+            for fs in audio_files:
+                try:
+                    if write_cover_to_file(fs.saved_to, cover_bytes, mime):
+                        ok_count += 1
+                except Exception as e:
+                    logger.warning("回写封面失败 %s: %s", fs.saved_to, e)
+            task.cover_applied = True
+            db.commit()
+            logger.info("任务 %s: 已为 %d/%d 个音频文件嵌入封面", task.id, ok_count, len(audio_files))
+        except Exception as e:
+            logger.warning("任务 %s: 获取封面字节失败: %s", task.id, e)
 
 
 def _worker(task_id: int) -> None:
@@ -299,11 +365,13 @@ def _worker(task_id: int) -> None:
         task.current_file = None
         db.commit()
 
+        # 下载完成后：把元数据（专辑/艺术家）与封面回写到音频文件标签
+        if completed > 0 or skipped > 0:
+            _apply_metadata_and_cover(db, task, client)
+
         # 触发扫描
         if completed > 0 or skipped > 0:
-            token = _get_local_node_token()
-            if token:
-                _trigger_local_node_scan(token)
+            _trigger_local_node_scan()
 
     except Exception as e:
         logger.error("下载任务 %s 异常: %s", task_id, e, exc_info=True)

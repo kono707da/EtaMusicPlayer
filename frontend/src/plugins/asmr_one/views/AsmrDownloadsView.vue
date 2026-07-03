@@ -11,12 +11,14 @@ import {
   XCircle,
   Trash2,
   Ban,
-  Download
+  Download,
+  Image as ImageIcon
 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Empty } from '@/components/ui/empty'
 import { useToast } from '@/components/ui/toast/use-toast'
+import CoverPickerDialog from '@/components/CoverPickerDialog.vue'
 import { listDownloads, getDownload, cancelDownload, deleteDownload } from '../api'
 
 const router = useRouter()
@@ -28,6 +30,11 @@ const expandedTaskId = ref(null)
 const expandedTask = ref(null)
 const expandedLoading = ref(false)
 let pollTimer = null
+
+// 封面选择器
+const coverPickerOpen = ref(false)
+const coverPickerTaskId = ref(null)
+const coverPickerWorkId = ref(null)
 
 const hasRunning = computed(() =>
   tasks.value.some((t) => t.status === 'running' || t.status === 'pending')
@@ -83,6 +90,16 @@ async function onDelete(task) {
   } catch (e) {
     toast.error('删除失败', e?.response?.data?.detail || e.message)
   }
+}
+
+function onChangeCover(task) {
+  coverPickerTaskId.value = task.id
+  coverPickerWorkId.value = task.work_id
+  coverPickerOpen.value = true
+}
+
+async function onCoverApplied() {
+  await load()
 }
 
 function statusMeta(status) {
@@ -198,6 +215,15 @@ onUnmounted(() => {
                 取消
               </Button>
               <Button
+                v-if="['completed', 'partial'].includes(t.status)"
+                variant="ghost"
+                size="sm"
+                @click="onChangeCover(t)"
+              >
+                <ImageIcon class="h-3.5 w-3.5" />
+                {{ t.cover_applied ? '换封面' : '设封面' }}
+              </Button>
+              <Button
                 v-if="!['running', 'pending'].includes(t.status)"
                 variant="ghost"
                 size="sm"
@@ -278,5 +304,13 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- 封面选择器 -->
+    <CoverPickerDialog
+      v-model:open="coverPickerOpen"
+      :task-id="coverPickerTaskId"
+      :work-id="coverPickerWorkId"
+      @applied="onCoverApplied"
+    />
   </div>
 </template>

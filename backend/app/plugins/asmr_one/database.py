@@ -43,3 +43,18 @@ def init_db() -> None:
     from app.plugins.asmr_one import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate()
+
+def _migrate() -> None:
+    """简单迁移：给已存在的表补字段。SQLite 不支持 IF NOT EXISTS 的 ADD COLUMN。"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if not insp.has_table("download_tasks"):
+        return
+    cols = {c["name"] for c in insp.get_columns("download_tasks")}
+    with engine.begin() as conn:
+        if "metadata_json" not in cols:
+            conn.execute(text("ALTER TABLE download_tasks ADD COLUMN metadata_json JSON"))
+        if "cover_applied" not in cols:
+            conn.execute(text("ALTER TABLE download_tasks ADD COLUMN cover_applied BOOLEAN DEFAULT 0 NOT NULL"))
