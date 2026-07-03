@@ -1,0 +1,17 @@
+# EtaMusic 访问端配置
+host: 127.0.0.1
+port: 8000
+# JWT 密钥，生产环境务必修改为随机字符串
+jwt_secret: "change-me-to-a-random-secret-string-please"
+jwt_expire_minutes: 1440
+# 扫描线程数（local_node 插件使用）
+scan_workers: 2
+# SQLite 数据库相对路径（相对于 backend 目录，local_node 插件使用）
+db_path: "data/etamusic.db"
+# 默认管理员密码（local_node 插件使用）
+default_admin_password: "admin123"
+# 已启用的插件列表
+plugins_enabled:
+  - local_node
+# 访问端对外可达地址
+self_url: "http://127.0.0.1:8000"
