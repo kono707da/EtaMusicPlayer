@@ -135,8 +135,9 @@ async function handlePreview(payload) {
   if (payload.type === 'text') {
     previewLoading.value = true
     try {
-      // 优先用 stream_url，没有则用 url（mediaDownloadUrl）
-      const url = payload.node.stream_url || payload.node.url
+      // 兼容两种字段命名：flatten_file_tree 拍平后用 stream_url/url，原始 tree 用 mediaStreamUrl/mediaDownloadUrl
+      const url = payload.node.stream_url || payload.node.mediaStreamUrl
+        || payload.node.url || payload.node.mediaDownloadUrl
       if (!url) {
         previewContent.value = '（无法获取文件 URL）'
         return
@@ -793,8 +794,8 @@ function openNeighbor(id) {
               <Play class="h-12 w-12 text-emerald-400" fill="currentColor" />
             </div>
             <audio
-              :key="previewFile.node.stream_url || previewFile.node.url"
-              :src="previewFile.node.stream_url || previewFile.node.url"
+              :key="previewFile.node.stream_url || previewFile.node.mediaStreamUrl || previewFile.node.url || previewFile.node.mediaDownloadUrl"
+              :src="previewFile.node.stream_url || previewFile.node.mediaStreamUrl || previewFile.node.url || previewFile.node.mediaDownloadUrl"
               controls
               autoplay
               class="w-full"
@@ -809,8 +810,8 @@ function openNeighbor(id) {
           <!-- 视频播放 -->
           <div v-else-if="previewFile?.type === 'video'" class="flex justify-center">
             <video
-              :key="previewFile.node.stream_url || previewFile.node.url"
-              :src="previewFile.node.stream_url || previewFile.node.url"
+              :key="previewFile.node.stream_url || previewFile.node.mediaStreamUrl || previewFile.node.url || previewFile.node.mediaDownloadUrl"
+              :src="previewFile.node.stream_url || previewFile.node.mediaStreamUrl || previewFile.node.url || previewFile.node.mediaDownloadUrl"
               controls
               autoplay
               class="max-w-full max-h-[60vh] rounded"
@@ -822,7 +823,7 @@ function openNeighbor(id) {
           <!-- 图片预览 -->
           <div v-else-if="previewFile?.type === 'image'" class="flex justify-center">
             <img
-              :src="previewFile.node.url"
+              :src="previewFile.node.url || previewFile.node.mediaDownloadUrl"
               :alt="previewFile.node.title"
               class="max-w-full max-h-[60vh] rounded-lg border border-border object-contain"
               @error="$event.target.style.display='none'; $event.target.nextElementSibling.style.display='block'"
