@@ -6,9 +6,10 @@
  */
 import local_node from './local_node'
 import asmr_one from './asmr_one'
+import bili_audio from './bili_audio'
 
 // 所有已编写的前端插件 manifest
-const allPlugins = [local_node, asmr_one]
+const allPlugins = [local_node, asmr_one, bili_audio]
 
 /**
  * 获取已启用插件的 manifest 列表
