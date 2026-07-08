@@ -5,8 +5,6 @@ pipeline {
         REGISTRY        = '192.168.188.18:5000'
         DOCKER_IMAGE    = "192.168.188.18:5000/etamusic"
         DOCKER_TAG      = "${BUILD_NUMBER}"
-        DEPLOY_HOST     = '38.92.9.207'
-        DEPLOY_USER     = 'root'
     }
 
     stages {
@@ -32,30 +30,23 @@ pipeline {
 
         stage('Deploy to Server') {
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY')]) {
-                    sh """
-ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
-  "docker pull ${DOCKER_IMAGE}:latest && \
-   docker stop etamusic 2>/dev/null || true && \
-   docker rm etamusic 2>/dev/null || true && \
-   docker run -d \
-     --name etamusic \
-     --restart unless-stopped \
-     -p 8000:8000 \
-     -v etamusic-data:/app/backend/data \
-     -e ETA_HOST=0.0.0.0 \
-     -e ETA_PORT=8000 \
-     -e ETA_SELF_URL=http://${DEPLOY_HOST}:8000 \
-     ${DOCKER_IMAGE}:latest"
-                    """
-                }
+                sshPublisher(publishers: [
+                    sshPublisherDesc(
+                        configName: 'hongkong',
+                        transfers: [
+                            sshTransfer(
+                                execCommand: "docker pull ${DOCKER_IMAGE}:latest && docker stop etamusic 2>/dev/null || true && docker rm etamusic 2>/dev/null || true && docker run -d --name etamusic --restart unless-stopped -p 8000:8000 -v etamusic-data:/app/backend/data -e ETA_HOST=0.0.0.0 -e ETA_PORT=8000 -e ETA_SELF_URL=http://38.92.9.207:8000 ${DOCKER_IMAGE}:latest"
+                            )
+                        ]
+                    )
+                ])
             }
         }
     }
 
     post {
         success {
-            echo "部署成功！访问地址: http://${DEPLOY_HOST}:8000"
+            echo '部署成功！访问地址: http://38.92.9.207:8000'
         }
         failure {
             echo '部署失败，请检查 Jenkins 日志'
