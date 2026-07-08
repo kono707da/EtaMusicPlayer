@@ -16,6 +16,6 @@ class Base(DeclarativeBase):
 
 
 def init_db() -> None:
-    from app.plugins.bili_audio.models import BiliDownloadTask, BiliSetting
+    from app.plugins.bili_audio.models import BiliDownloadTask, BiliSetting, BiliSubscription
 
     Base.metadata.create_all(bind=engine)

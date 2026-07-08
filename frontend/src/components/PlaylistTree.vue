@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Server, Library, ListMusic, Unplug, ChevronRight, ChevronDown, RefreshCw } from 'lucide-vue-next'
+import { Server, Library, ListMusic, Unplug, ChevronRight, ChevronDown, RefreshCw, Inbox } from 'lucide-vue-next'
 import { useNodesStore } from '../stores/nodes'
 import { useLibraryStore } from '../stores/library'
 import { Button } from '@/components/ui/button'
@@ -31,7 +31,24 @@ const treeData = computed(() => {
         nodeName: n.name,
         isLeaf: true
       },
-      // 仅当前激活节点展示其播放列表（过滤系统列表，"全部音乐"已作为固定项）
+      ...(n.id === nodesStore.activeNodeId
+        ? (() => {
+            const inbox = (libraryStore.playlists || []).find((p) => p.is_system && p.name === '收集箱')
+            return inbox
+              ? [
+                  {
+                    id: `node-${n.id}-inbox`,
+                    label: '收集箱',
+                    type: 'inbox',
+                    nodeId: n.id,
+                    nodeName: n.name,
+                    playlistId: inbox.id,
+                    isLeaf: true
+                  }
+                ]
+              : []
+          })()
+        : []),
       ...(n.id === nodesStore.activeNodeId
         ? (libraryStore.playlists || [])
             .filter((p) => !p.is_system)
@@ -66,6 +83,7 @@ function toggleExpand(id) {
 // 子节点图标
 function childIcon(type) {
   if (type === 'all') return Library
+  if (type === 'inbox') return Inbox
   return ListMusic
 }
 
@@ -88,6 +106,18 @@ function onNodeClick(data) {
     libraryStore.resetPaging()
     libraryStore.loadAllTracks()
     emit('select', { type: 'all', nodeId: data.nodeId, nodeName: data.nodeName })
+  } else if (data.type === 'inbox') {
+    if (data.nodeId !== nodesStore.activeNodeId) {
+      nodesStore.setActive(data.nodeId)
+    }
+    libraryStore.resetPaging()
+    libraryStore.loadPlaylistTracks(data.playlistId)
+    emit('select', {
+      type: 'inbox',
+      nodeId: data.nodeId,
+      nodeName: data.nodeName,
+      playlistId: data.playlistId
+    })
   } else if (data.type === 'playlist') {
     if (data.nodeId !== nodesStore.activeNodeId) {
       nodesStore.setActive(data.nodeId)

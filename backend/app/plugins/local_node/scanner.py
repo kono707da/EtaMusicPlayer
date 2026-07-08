@@ -20,6 +20,7 @@ from app.plugins.local_node.models import (
     PlaylistItem,
     ScanTask,
     SYSTEM_PLAYLIST_ALL,
+    SYSTEM_PLAYLIST_INBOX,
     Track,
     WatchDir,
 )
@@ -185,6 +186,7 @@ def scan_directory(watch_dir: WatchDir, db: Session) -> tuple[int, int, int]:
     updated_tracks = 0
 
     system_playlist = _get_or_create_system_playlist(db)
+    inbox_playlist = _get_or_create_inbox_playlist(db)
 
     root = watch_dir.path
     root_path = Path(root)
@@ -255,6 +257,8 @@ def scan_directory(watch_dir: WatchDir, db: Session) -> tuple[int, int, int]:
             db.flush()
             # 加入系统播放列表
             _add_to_system_playlist(db, system_playlist, track)
+            if inbox_playlist is not None:
+                _add_to_system_playlist(db, inbox_playlist, track)
             new_tracks += 1
         else:
             existing.abs_path = abs_path
@@ -302,6 +306,30 @@ def _get_or_create_system_playlist(db: Session) -> Playlist:
             owner_id=owner_id,
             is_system=True,
             description="系统自动维护：所有已扫描曲目",
+        )
+        db.add(pl)
+        db.commit()
+        db.refresh(pl)
+    return pl
+
+
+def _get_or_create_inbox_playlist(db: Session) -> Optional[Playlist]:
+    pl = (
+        db.query(Playlist)
+        .filter(Playlist.is_system.is_(True), Playlist.name == SYSTEM_PLAYLIST_INBOX)
+        .one_or_none()
+    )
+    if pl is None:
+        from app.plugins.local_node.models import User
+
+        admin = db.query(User).filter(User.is_admin.is_(True)).first()
+        if admin is None:
+            return None
+        pl = Playlist(
+            name=SYSTEM_PLAYLIST_INBOX,
+            owner_id=admin.id,
+            is_system=True,
+            description="系统自动维护：所有下载的音频",
         )
         db.add(pl)
         db.commit()

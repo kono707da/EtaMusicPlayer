@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.plugins.bili_audio.bili_client import BiliClient
 from app.plugins.bili_audio.database import SessionLocal
 from app.plugins.bili_audio.downloader import cancel_download_task, start_download_task
-from app.plugins.bili_audio.models import BiliDownloadTask
+from app.plugins.bili_audio.models import BiliDownloadTask, BiliSubscription
 
 logger = logging.getLogger("etamusic.plugins.bili_audio")
 
@@ -277,4 +277,170 @@ def delete_download(task_id: int, db: Session = Depends(_get_db)):
         cancel_download_task(task_id)
     db.delete(task)
     db.commit()
+    return {"ok": True}
+
+
+class SubscriptionCreate(BaseModel):
+    url: str
+    auto_download: bool = True
+    audio_quality: int = 30280
+    output_format: str = "mp3"
+    target_watch_dir_id: Optional[int] = None
+    target_subdir: Optional[str] = "B站音频"
+
+
+@router.post("/subscriptions")
+def create_subscription(req: SubscriptionCreate, db: Session = Depends(_get_db)):
+    client = _get_client(db)
+    parsed = client.parse_collection_url(req.url)
+    if not parsed:
+        raise HTTPException(status_code=400, detail="无法解析合集链接，请输入正确的B站合集/列表链接")
+
+    mid, season_id = parsed
+    try:
+        data = client.get_collection_videos(mid, season_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"获取合集信息失败: {e}")
+
+    meta = data.get("meta", {}) or {}
+    archives = data.get("archives", []) or []
+
+    upper_name = meta.get("upper_name", "")
+    if not upper_name:
+        try:
+            upper_info = client.get_upper_info(mid)
+            if upper_info:
+                upper_name = upper_info.get("name", "")
+        except Exception:
+            pass
+
+    sub = BiliSubscription(
+        url=req.url,
+        sub_type="collection",
+        title=meta.get("name", meta.get("title", "")),
+        upper_name=upper_name,
+        upper_mid=mid,
+        season_id=season_id,
+        mid=mid,
+        video_count=len(archives),
+        downloaded_count=0,
+        auto_download=req.auto_download,
+        audio_quality=req.audio_quality,
+        output_format=req.output_format,
+        target_watch_dir_id=req.target_watch_dir_id,
+        target_subdir=req.target_subdir,
+        status="active",
+    )
+    db.add(sub)
+    db.commit()
+    db.refresh(sub)
+
+    if req.auto_download:
+        from app.plugins.bili_audio.subscription import check_subscription
+        check_subscription(sub.id)
+        db.refresh(sub)
+
+    return {
+        "id": sub.id,
+        "url": sub.url,
+        "title": sub.title,
+        "upper_name": sub.upper_name,
+        "video_count": sub.video_count,
+        "downloaded_count": sub.downloaded_count,
+        "auto_download": sub.auto_download,
+        "status": sub.status,
+        "last_checked_at": sub.last_checked_at.isoformat() if sub.last_checked_at else None,
+        "created_at": sub.created_at.isoformat() if sub.created_at else None,
+    }
+
+
+@router.get("/subscriptions")
+def list_subscriptions(db: Session = Depends(_get_db)):
+    subs = db.query(BiliSubscription).order_by(BiliSubscription.id.desc()).all()
+    return {
+        "items": [
+            {
+                "id": s.id,
+                "url": s.url,
+                "sub_type": s.sub_type,
+                "title": s.title,
+                "upper_name": s.upper_name,
+                "upper_mid": s.upper_mid,
+                "season_id": s.season_id,
+                "mid": s.mid,
+                "video_count": s.video_count,
+                "downloaded_count": s.downloaded_count,
+                "auto_download": s.auto_download,
+                "audio_quality": s.audio_quality,
+                "output_format": s.output_format,
+                "target_watch_dir_id": s.target_watch_dir_id,
+                "target_subdir": s.target_subdir,
+                "last_checked_at": s.last_checked_at.isoformat() if s.last_checked_at else None,
+                "status": s.status,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+            }
+            for s in subs
+        ]
+    }
+
+
+@router.get("/subscriptions/{sub_id}")
+def get_subscription(sub_id: int, db: Session = Depends(_get_db)):
+    sub = db.get(BiliSubscription, sub_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    return {
+        "id": sub.id,
+        "url": sub.url,
+        "sub_type": sub.sub_type,
+        "title": sub.title,
+        "upper_name": sub.upper_name,
+        "upper_mid": sub.upper_mid,
+        "season_id": sub.season_id,
+        "mid": sub.mid,
+        "video_count": sub.video_count,
+        "downloaded_count": sub.downloaded_count,
+        "auto_download": sub.auto_download,
+        "audio_quality": sub.audio_quality,
+        "output_format": sub.output_format,
+        "target_watch_dir_id": sub.target_watch_dir_id,
+        "target_subdir": sub.target_subdir,
+        "last_checked_at": sub.last_checked_at.isoformat() if sub.last_checked_at else None,
+        "status": sub.status,
+        "created_at": sub.created_at.isoformat() if sub.created_at else None,
+        "updated_at": sub.updated_at.isoformat() if sub.updated_at else None,
+    }
+
+
+@router.post("/subscriptions/{sub_id}/check")
+def check_sub(sub_id: int, db: Session = Depends(_get_db)):
+    from app.plugins.bili_audio.subscription import check_subscription
+    result = check_subscription(sub_id)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@router.delete("/subscriptions/{sub_id}")
+def delete_subscription(sub_id: int, db: Session = Depends(_get_db)):
+    sub = db.get(BiliSubscription, sub_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    db.delete(sub)
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/subscriptions/{sub_id}")
+def update_subscription(sub_id: int, req: dict, db: Session = Depends(_get_db)):
+    sub = db.get(BiliSubscription, sub_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    for key in ("auto_download", "audio_quality", "output_format", "target_watch_dir_id", "target_subdir", "status"):
+        if key in req:
+            setattr(sub, key, req[key])
+    sub.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(sub)
     return {"ok": True}

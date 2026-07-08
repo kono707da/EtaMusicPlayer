@@ -155,14 +155,45 @@ class BiliClient:
     def get_upper_info(self, mid: int) -> Optional[dict]:
         try:
             resp = self.session.get(
-                f"{_API_BASE}/x/space/wbi/acc/info",
+                f"{_API_BASE}/x/web-interface/card",
                 params={"mid": mid},
                 timeout=15,
             )
             resp.raise_for_status()
             data = resp.json()
             if data.get("code") == 0:
-                return data["data"]
+                card = data["data"].get("card", {})
+                return {"name": card.get("name", ""), "mid": card.get("mid", mid)}
         except Exception as e:
             logger.warning("获取UP主信息失败: %s", e)
+        return None
+
+    def get_collection_videos(self, mid: int, season_id: int, page_num: int = 1, page_size: int = 30) -> dict:
+        resp = self.session.get(
+            f"{_API_BASE}/x/polymer/web-space/seasons_archives_list",
+            params={
+                "mid": mid,
+                "season_id": season_id,
+                "sort_reverse": "false",
+                "page_num": page_num,
+                "page_size": page_size,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != 0:
+            raise ValueError(f"获取合集视频列表失败: {data.get('message', 'unknown')}")
+        return data.get("data", {})
+
+    def parse_collection_url(self, url: str) -> Optional[tuple]:
+        m = re.search(r"space\.bilibili\.com/(\d+)/lists/(\d+)", url)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        m = re.search(r"space\.bilibili\.com/(\d+)/channel/seriesdetail\?sid=(\d+)", url)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+        m = re.search(r"space\.bilibili\.com/(\d+)/channel/collectiondetail\?sid=(\d+)", url)
+        if m:
+            return int(m.group(1)), int(m.group(2))
         return None

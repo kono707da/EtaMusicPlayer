@@ -557,6 +557,29 @@ def _worker(task_id: int) -> None:
 
         if completed > 0 or skipped > 0:
             _trigger_local_node_scan()
+            try:
+                from app.plugins.local_node.inbox import add_tracks_to_inbox, find_tracks_by_paths
+                file_statuses = (
+                    db.query(DownloadFileStatus)
+                    .filter(
+                        DownloadFileStatus.task_id == task.id,
+                        DownloadFileStatus.status.in_(["completed", "skipped"]),
+                        DownloadFileStatus.saved_to.isnot(None),
+                    )
+                    .all()
+                )
+                saved_paths = []
+                for fs in file_statuses:
+                    if fs.saved_to:
+                        saved_paths.append(fs.saved_to)
+                if saved_paths:
+                    track_ids = find_tracks_by_paths(saved_paths)
+                    if track_ids:
+                        added = add_tracks_to_inbox(track_ids)
+                        if added > 0:
+                            logger.info("已将 %d 首曲目添加到收集箱", added)
+            except Exception as e:
+                logger.warning("添加到收集箱失败: %s", e)
 
     except Exception as e:
         logger.error("下载任务 %s 异常: %s", task_id, e, exc_info=True)

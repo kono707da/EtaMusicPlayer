@@ -18,7 +18,7 @@ from app.config import settings
 from app.security import hash_password
 
 from app.plugins.local_node.database import SessionLocal, init_db
-from app.plugins.local_node.models import DedupConfig, Playlist, User, SYSTEM_PLAYLIST_ALL
+from app.plugins.local_node.models import DedupConfig, Playlist, User, SYSTEM_PLAYLIST_ALL, SYSTEM_PLAYLIST_INBOX
 from app.plugins.local_node.dedup import DEFAULT_FIELDS, DEFAULT_DURATION_TOLERANCE
 
 # 导入路由
@@ -86,6 +86,22 @@ def bootstrap() -> None:
             db.add(sys_pl)
             db.commit()
             logger.info("本地节点：已创建系统播放列表 '%s'", SYSTEM_PLAYLIST_ALL)
+
+        inbox_pl = (
+            db.query(Playlist)
+            .filter(Playlist.is_system.is_(True), Playlist.name == SYSTEM_PLAYLIST_INBOX)
+            .one_or_none()
+        )
+        if inbox_pl is None:
+            inbox_pl = Playlist(
+                name=SYSTEM_PLAYLIST_INBOX,
+                owner_id=admin.id,
+                is_system=True,
+                description="系统自动维护：所有下载的音频",
+            )
+            db.add(inbox_pl)
+            db.commit()
+            logger.info("本地节点：已创建系统播放列表 '%s'", SYSTEM_PLAYLIST_INBOX)
 
         # 3. 创建默认 DedupConfig（id=1）
         cfg = db.get(DedupConfig, 1)

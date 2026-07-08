@@ -242,3 +242,4 @@ class ScanTask(Base):
 
 # 系统播放列表名称常量
 SYSTEM_PLAYLIST_ALL = "全部音乐"
+SYSTEM_PLAYLIST_INBOX = "收集箱"

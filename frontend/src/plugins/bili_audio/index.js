@@ -1,4 +1,4 @@
-import { Music, Download, Settings } from 'lucide-vue-next'
+import { Music, Download, Settings, BookmarkIcon } from 'lucide-vue-next'
 
 export default {
   name: 'bili_audio',
@@ -21,6 +21,12 @@ export default {
       name: 'bili-settings',
       component: () => import('./views/BiliSettingsView.vue'),
       meta: { title: 'B站设置' }
+    },
+    {
+      path: '/bili/subscriptions',
+      name: 'bili-subscriptions',
+      component: () => import('./views/BiliSubscriptionView.vue'),
+      meta: { title: '订阅管理' }
     }
   ],
 
@@ -31,6 +37,7 @@ export default {
       children: [
         { path: '/bili', label: '下载音频', icon: Music },
         { path: '/bili/tasks', label: '下载任务', icon: Download },
+        { path: '/bili/subscriptions', label: '订阅管理', icon: BookmarkIcon },
         { path: '/bili/settings', label: '设置', icon: Settings }
       ]
     }

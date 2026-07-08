@@ -39,3 +39,27 @@ export function updateSettings(updates) {
 export function getTargetNodes() {
   return client.get(`${BASE}/target-nodes`).then(r => r.data)
 }
+
+export function createSubscription(data) {
+  return client.post(`${BASE}/subscriptions`, data).then(r => r.data)
+}
+
+export function listSubscriptions() {
+  return client.get(`${BASE}/subscriptions`).then(r => r.data)
+}
+
+export function getSubscription(subId) {
+  return client.get(`${BASE}/subscriptions/${subId}`).then(r => r.data)
+}
+
+export function checkSubscription(subId) {
+  return client.post(`${BASE}/subscriptions/${subId}/check`).then(r => r.data)
+}
+
+export function deleteSubscription(subId) {
+  return client.delete(`${BASE}/subscriptions/${subId}`).then(r => r.data)
+}
+
+export function updateSubscription(subId, updates) {
+  return client.put(`${BASE}/subscriptions/${subId}`, updates).then(r => r.data)
+}

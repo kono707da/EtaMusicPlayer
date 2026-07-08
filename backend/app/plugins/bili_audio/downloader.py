@@ -73,6 +73,55 @@ def _trigger_local_node_scan() -> bool:
             pass
 
 
+def _add_to_inbox(final_path: str) -> None:
+    try:
+        from app.plugins.local_node.database import SessionLocal as LocalSession
+        from app.plugins.local_node.models import Playlist, PlaylistItem, Track, SYSTEM_PLAYLIST_INBOX
+    except ImportError as e:
+        logger.warning("无法导入 local_node 模块，跳过收集箱添加: %s", e)
+        return
+    db_local = LocalSession()
+    try:
+        track = db_local.query(Track).filter(Track.abs_path == str(final_path)).first()
+        if not track:
+            return
+        inbox_pl = (
+            db_local.query(Playlist)
+            .filter(Playlist.is_system.is_(True), Playlist.name == SYSTEM_PLAYLIST_INBOX)
+            .one_or_none()
+        )
+        if not inbox_pl:
+            return
+        existing = (
+            db_local.query(PlaylistItem)
+            .filter(
+                PlaylistItem.playlist_id == inbox_pl.id,
+                PlaylistItem.track_id == track.id,
+            )
+            .one_or_none()
+        )
+        if existing:
+            return
+        max_pos = (
+            db_local.query(PlaylistItem.position)
+            .filter(PlaylistItem.playlist_id == inbox_pl.id)
+            .order_by(PlaylistItem.position.desc())
+            .first()
+        )
+        next_pos = (max_pos[0] + 1) if max_pos else 0
+        item = PlaylistItem(
+            playlist_id=inbox_pl.id,
+            track_id=track.id,
+            position=next_pos,
+        )
+        db_local.add(item)
+        db_local.commit()
+    except Exception as e:
+        logger.warning("添加到收集箱失败: %s", e)
+    finally:
+        db_local.close()
+
+
 def _find_ffmpeg() -> Optional[str]:
     return shutil.which("ffmpeg")
 
@@ -205,6 +254,7 @@ def _worker(task_id: int) -> None:
             task.finished_at = datetime.utcnow()
             db.commit()
             _trigger_local_node_scan()
+            _add_to_inbox(str(final_path))
             return
 
         def on_progress(done: int, total: int) -> None:
@@ -279,6 +329,7 @@ def _worker(task_id: int) -> None:
         db.commit()
 
         _trigger_local_node_scan()
+        _add_to_inbox(str(final_path))
 
     except Exception as e:
         logger.error("B站音频下载任务 %s 异常: %s", task_id, e, exc_info=True)
