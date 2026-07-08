@@ -120,12 +120,20 @@
   /* 侧边栏导航项 */
   .nav-item {
     @apply flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium
-           text-muted-foreground cursor-pointer transition-colors duration-150;
+           text-muted-foreground cursor-pointer;
+    transition: background-color 80ms ease, color 80ms ease;
+    outline: none;
   }
   .nav-item:hover {
     @apply bg-accent text-foreground;
   }
+  .nav-item:focus-visible {
+    @apply ring-1 ring-ring;
+  }
   .nav-item-active {
     @apply bg-primary/10 text-primary;
+  }
+  .nav-item-active:hover {
+    @apply bg-primary/15 text-primary;
   }
 }

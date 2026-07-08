@@ -208,10 +208,13 @@ watch(
           <template v-for="item in navItems" :key="item.path || item.label">
             <!-- 可折叠分组 -->
             <template v-if="item.children">
-              <a
+              <div
                 class="nav-item"
                 :class="{ 'nav-item-active': item.children.some((c) => currentPath === c.path || currentPath.startsWith(c.path + '/')) }"
+                role="button"
+                tabindex="0"
                 @click="toggleGroup(item)"
+                @keydown.enter="toggleGroup(item)"
               >
                 <component :is="item.icon" class="h-4 w-4" />
                 <span class="flex-1">{{ item.label }}</span>
@@ -220,30 +223,36 @@ watch(
                   class="h-3.5 w-3.5 text-muted-foreground"
                 />
                 <ChevronRight v-else class="h-3.5 w-3.5 text-muted-foreground" />
-              </a>
+              </div>
               <div v-show="isGroupExpanded(item)" class="flex flex-col gap-0.5 ml-3 pl-2 border-l border-border/60">
-                <a
+                <div
                   v-for="child in item.children"
                   :key="child.path"
                   class="nav-item"
                   :class="{ 'nav-item-active': currentPath === child.path || (child.path !== '/asmr' && currentPath.startsWith(child.path)) }"
+                  role="button"
+                  tabindex="0"
                   @click="go(child.path)"
+                  @keydown.enter="go(child.path)"
                 >
                   <component :is="child.icon" class="h-4 w-4" />
                   <span>{{ child.label }}</span>
-                </a>
+                </div>
               </div>
             </template>
             <!-- 普通叶子项 -->
-            <a
+            <div
               v-else
               class="nav-item"
               :class="{ 'nav-item-active': currentPath === item.path }"
+              role="button"
+              tabindex="0"
               @click="go(item.path)"
+              @keydown.enter="go(item.path)"
             >
               <component :is="item.icon" class="h-4 w-4" />
               <span>{{ item.label }}</span>
-            </a>
+            </div>
           </template>
         </nav>
 
@@ -253,16 +262,19 @@ watch(
             管理功能
           </div>
           <nav class="flex flex-col gap-0.5">
-            <a
+            <div
               v-for="item in adminNavItems"
               :key="item.path"
               class="nav-item"
               :class="{ 'nav-item-active': currentPath === item.path }"
+              role="button"
+              tabindex="0"
               @click="go(item.path)"
+              @keydown.enter="go(item.path)"
             >
               <component :is="item.icon" class="h-4 w-4" />
               <span>{{ item.label }}</span>
-            </a>
+            </div>
           </nav>
         </template>
 
