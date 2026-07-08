@@ -32,9 +32,9 @@ pipeline {
 
         stage('Deploy to Server') {
             steps {
-                sshagent(credentials: ['deploy-ssh-key']) {
+                withCredentials([sshUserPrivateKey(credentialsId: 'deploy-ssh-key', keyFileVariable: 'SSH_KEY')]) {
                     sh """
-ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
+ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
   "docker pull ${DOCKER_IMAGE}:latest && \
    docker stop etamusic 2>/dev/null || true && \
    docker rm etamusic 2>/dev/null || true && \
