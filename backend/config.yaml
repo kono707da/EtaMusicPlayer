@@ -1,8 +1,7 @@
 # EtaMusic 访问端配置
 host: 127.0.0.1
 port: 8000
-# JWT 密钥，生产环境务必修改为随机字符串
-jwt_secret: "change-me-to-a-random-secret-string-please"
+# JWT 密钥已迁移到 data/settings.json，首次启动自动生成，无需手动配置
 jwt_expire_minutes: 1440
 # 扫描线程数（local_node 插件使用）
 scan_workers: 2

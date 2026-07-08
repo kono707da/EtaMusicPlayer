@@ -51,7 +51,7 @@ python run.py
 | 字段 | 说明 |
 |------|------|
 | host / port | 监听地址与端口 |
-| jwt_secret | JWT 签名密钥，生产环境务必修改 |
+| jwt_secret | JWT 签名密钥（首次启动自动生成，存储在 data/settings.json） |
 | jwt_expire_minutes | Token 有效期（分钟） |
 | scan_workers | 扫描线程数 |
 | db_path | SQLite 数据库相对路径 |
@@ -60,6 +60,7 @@ python run.py
 ## 数据文件
 
 - `backend/data/etamusic.db`：SQLite 数据库，自动创建，**不可删除**
+- `backend/data/settings.json`：运行时密钥（JWT 密钥等），自动生成，**不可删除**
 - `backend/config.yaml`：配置文件
 
 ## 主要 API

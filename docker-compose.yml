@@ -1,0 +1,18 @@
+services:
+  etamusic:
+    image: 192.168.188.18:5000/etamusic:${IMAGE_TAG:-latest}
+    container_name: etamusic
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - etamusic-data:/app/backend/data
+      - ./config.yaml:/app/backend/config.yaml:ro
+    environment:
+      - ETA_HOST=0.0.0.0
+      - ETA_PORT=8000
+      # JWT 密钥首次启动自动生成并持久化到 data/settings.json，无需配置
+      - ETA_SELF_URL=${ETA_SELF_URL:-http://localhost:8000}
+
+volumes:
+  etamusic-data:
