@@ -7,7 +7,6 @@ pipeline {
         DOCKER_TAG      = "${BUILD_NUMBER}"
         DEPLOY_HOST     = '38.92.9.207'
         DEPLOY_USER     = 'root'
-        DEPLOY_PATH     = '/opt/etamusic'
     }
 
     stages {
@@ -42,8 +41,23 @@ pipeline {
             steps {
                 sshagent(credentials: ['deploy-ssh-key']) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
-                            "cd ${DEPLOY_PATH} && IMAGE_TAG=${DOCKER_TAG} docker compose pull && docker compose up -d"
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} """
+                    + """
+                        "docker pull ${DOCKER_IMAGE}:latest && """
+                    + """
+                        docker stop etamusic 2>/dev/null || true && """
+                    + """
+                        docker rm etamusic 2>/dev/null || true && """
+                    + """
+                        docker run -d \\
+                            --name etamusic \\
+                            --restart unless-stopped \\
+                            -p 8000:8000 \\
+                            -v etamusic-data:/app/backend/data \\
+                            -e ETA_HOST=0.0.0.0 \\
+                            -e ETA_PORT=8000 \\
+                            -e ETA_SELF_URL=http://${DEPLOY_HOST}:8000 \\
+                            ${DOCKER_IMAGE}:latest"
                     """
                 }
             }
