@@ -19,21 +19,14 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build \
-                        -t ${DOCKER_IMAGE}:${DOCKER_TAG} \
-                        -t ${DOCKER_IMAGE}:latest \
-                        .
-                """
+                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest ."
             }
         }
 
         stage('Push to Registry') {
             steps {
-                sh """
-                    docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                    docker push ${DOCKER_IMAGE}:latest
-                """
+                sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                sh "docker push ${DOCKER_IMAGE}:latest"
             }
         }
 
@@ -41,23 +34,19 @@ pipeline {
             steps {
                 sshagent(credentials: ['deploy-ssh-key']) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} """
-                    + """
-                        "docker pull ${DOCKER_IMAGE}:latest && """
-                    + """
-                        docker stop etamusic 2>/dev/null || true && """
-                    + """
-                        docker rm etamusic 2>/dev/null || true && """
-                    + """
-                        docker run -d \\
-                            --name etamusic \\
-                            --restart unless-stopped \\
-                            -p 8000:8000 \\
-                            -v etamusic-data:/app/backend/data \\
-                            -e ETA_HOST=0.0.0.0 \\
-                            -e ETA_PORT=8000 \\
-                            -e ETA_SELF_URL=http://${DEPLOY_HOST}:8000 \\
-                            ${DOCKER_IMAGE}:latest"
+ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} \
+  "docker pull ${DOCKER_IMAGE}:latest && \
+   docker stop etamusic 2>/dev/null || true && \
+   docker rm etamusic 2>/dev/null || true && \
+   docker run -d \
+     --name etamusic \
+     --restart unless-stopped \
+     -p 8000:8000 \
+     -v etamusic-data:/app/backend/data \
+     -e ETA_HOST=0.0.0.0 \
+     -e ETA_PORT=8000 \
+     -e ETA_SELF_URL=http://${DEPLOY_HOST}:8000 \
+     ${DOCKER_IMAGE}:latest"
                     """
                 }
             }
@@ -72,7 +61,7 @@ pipeline {
             echo '部署失败，请检查 Jenkins 日志'
         }
         always {
-            sh 'docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} 2>/dev/null || true'
+            sh "docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} 2>/dev/null || true"
             cleanWs()
         }
     }
