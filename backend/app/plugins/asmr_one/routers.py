@@ -836,6 +836,7 @@ def delete_download(task_id: int, db: Session = Depends(get_db)):
 class CoverApplyRequest(BaseModel):
     """给已完成的下载任务补/换封面"""
     cover_type: str = Field(..., pattern="^(main|sam|240x240)$")
+    cover_mode: str = Field("embed", pattern="^(embed|save|both)$")
 
 
 @router.post("/downloads/{task_id}/apply-cover")
@@ -844,11 +845,14 @@ def apply_cover(
     payload: CoverApplyRequest,
     db: Session = Depends(get_db),
 ) -> dict:
-    """对已完成的下载任务，重新拉取指定封面并嵌入到所有音频文件。
+    """对已完成的下载任务，重新拉取指定封面并按模式处理。
 
-    用于下载时未选封面、或想更换封面的场景。
+    cover_mode:
+      - embed: 仅嵌入到音频文件标签
+      - save:  仅保存为 cover.jpg 到下载目录
+      - both:  嵌入 + 保存 cover.jpg
     """
-    from app.plugins.asmr_one.downloader import _apply_metadata_and_cover
+    from app.plugins.asmr_one.downloader import _apply_metadata_and_cover, _trigger_local_node_scan
 
     task = db.get(DownloadTask, task_id)
     if task is None:
@@ -867,12 +871,17 @@ def apply_cover(
     task.cover_applied = False
     db.commit()
 
-    _apply_metadata_and_cover(db, task, client)
+    _apply_metadata_and_cover(db, task, client, cover_mode=payload.cover_mode)
+
+    # 嵌入封面后必须触发 local_node 重新扫描，否则 DB 里 cover_embedded 仍为 False
+    if payload.cover_mode in ("embed", "both"):
+        _trigger_local_node_scan()
 
     return {
         "task_id": task_id,
         "cover_applied": task.cover_applied,
         "cover_type": payload.cover_type,
+        "cover_mode": payload.cover_mode,
     }
 
 

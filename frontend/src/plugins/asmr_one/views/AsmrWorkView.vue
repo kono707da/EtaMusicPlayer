@@ -221,7 +221,8 @@ async function submitDownload() {
       album: w.title || '',
       artist: artist,
       album_artist: w.name || '',
-      cover_type: embedCover.value ? selectedCoverType.value : null
+      cover_type: embedCover.value ? selectedCoverType.value : null,
+      source_url: `https://asmr.one/work/${w.id}`
     }
     const payload = {
       work_id: w.id,

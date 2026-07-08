@@ -144,7 +144,14 @@ watch(
         :tracks="libraryStore.tracks"
         :loading="libraryStore.loading"
         :show-source="showSource"
+        :show-pagination="false"
+        :node-id="nodesStore.activeNode?.id"
+        :node-name="nodesStore.activeNode?.name"
+        :total="libraryStore.tracksTotal"
+        :page="libraryStore.page"
+        :page-size="libraryStore.pageSize"
         @selection-change="onSelectionChange"
+        @page-change="onPageChange"
       />
     </div>
 

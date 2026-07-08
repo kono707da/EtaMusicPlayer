@@ -205,7 +205,7 @@ export async function previewMetadata(node, trackIds) {
   return resp.data
 }
 
-// 批量改单字段
+// 批量改单字段（行内双击编辑用）
 // payload: {track_ids: [], field, value}
 export async function updateMetadataField(node, trackIds, field, value) {
   const client = createNodeClient(node)
@@ -213,6 +213,48 @@ export async function updateMetadataField(node, trackIds, field, value) {
     track_ids: trackIds,
     field,
     value
+  })
+  return resp.data
+}
+
+// 多字段批量保存（右侧边栏一次保存多个字段）
+// updates: {field: value}
+export async function batchUpdateMetadata(node, trackIds, updates) {
+  const client = createNodeClient(node)
+  const resp = await client.post('/api/metadata/batch-update', {
+    track_ids: trackIds,
+    updates
+  })
+  return resp.data
+}
+
+// 批量写入歌词
+export async function batchWriteLyrics(node, trackIds, lyrics) {
+  const client = createNodeClient(node)
+  const resp = await client.post('/api/metadata/batch-lyrics', {
+    track_ids: trackIds,
+    lyrics
+  })
+  return resp.data
+}
+
+// 批量上传封面（同一张图嵌入多首曲目）
+export async function batchUploadCover(node, trackIds, file) {
+  const client = createNodeClient(node)
+  const form = new FormData()
+  form.append('track_ids', trackIds.join(','))
+  form.append('file', file)
+  const resp = await client.post('/api/metadata/batch-cover', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+  return resp.data
+}
+
+// 批量删除封面
+export async function batchRemoveCover(node, trackIds) {
+  const client = createNodeClient(node)
+  const resp = await client.post('/api/metadata/batch-cover-remove', {
+    track_ids: trackIds
   })
   return resp.data
 }

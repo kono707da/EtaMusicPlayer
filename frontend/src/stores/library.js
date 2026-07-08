@@ -61,7 +61,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
-   * 加载全部曲目（分页）
+   * 加载全部曲目（一次性拉取，不分页）
    */
   async function loadAllTracks() {
     const node = nodesStore.activeNode
@@ -73,12 +73,19 @@ export const useLibraryStore = defineStore('library', () => {
     }
     loading.value = true
     try {
+      // 一次性拉取全部曲目（后端 size 上限已放宽到 100000）
       const data = await getTracks(node, {
-        page: page.value,
-        page_size: pageSize.value,
+        page: 1,
+        size: 100000,
         q: keyword.value || undefined
       })
-      tracks.value = data.items || data.tracks || []
+      const items = data.items || data.tracks || []
+      // 给每条曲目标记来源节点，供封面/播放等场景使用
+      tracks.value = items.map((t) => ({
+        ...t,
+        __nodeId: t.__nodeId ?? node.id,
+        __nodeName: t.__nodeName ?? node.name
+      }))
       tracksTotal.value = data.total || tracks.value.length
       mode.value = 'all'
       currentPlaylistId.value = null
@@ -107,7 +114,14 @@ export const useLibraryStore = defineStore('library', () => {
       // 后端 GET /api/playlists/{id} 返回 PlaylistDetail，含 items 数组（每项有 track 对象）
       const data = await getPlaylistDetail(node, playlistId)
       const items = data.items || []
-      tracks.value = items.map((it) => it.track || it).filter(Boolean)
+      tracks.value = items
+        .map((it) => it.track || it)
+        .filter(Boolean)
+        .map((t) => ({
+          ...t,
+          __nodeId: t.__nodeId ?? node.id,
+          __nodeName: t.__nodeName ?? node.name
+        }))
       tracksTotal.value = tracks.value.length
       mode.value = 'playlist'
       currentPlaylistId.value = playlistId
@@ -145,7 +159,11 @@ export const useLibraryStore = defineStore('library', () => {
         if (r.status === 'fulfilled') merged.push(...r.value)
       })
       searchResults.value = merged
-      tracks.value = merged.map((m) => m.track)
+      tracks.value = merged.map((m) => ({
+        ...m.track,
+        __nodeId: m.track.__nodeId ?? m.nodeId,
+        __nodeName: m.track.__nodeName ?? m.nodeName
+      }))
       tracksTotal.value = merged.length
       mode.value = 'search'
     } finally {

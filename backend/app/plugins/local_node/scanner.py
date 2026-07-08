@@ -11,6 +11,7 @@ from mutagen.flac import FLAC  # type: ignore
 from mutagen.id3 import ID3  # type: ignore
 from mutagen.mp3 import MP3  # type: ignore
 from mutagen.mp4 import MP4  # type: ignore
+from mutagen.wave import WAVE  # type: ignore
 from sqlalchemy.orm import Session
 
 from app.plugins.local_node.database import SessionLocal
@@ -76,67 +77,76 @@ def _extract_metadata(file_path: str) -> dict:
     if mf is None:
         return info
 
-    # 时长与采样率/位率/声道
     try:
-        if mf.info is not None:
-            info["duration"] = getattr(mf.info, "length", None)
-            info["bitrate"] = getattr(mf.info, "bitrate", None)
-            info["sample_rate"] = getattr(mf.info, "sample_rate", None)
-            info["channels"] = getattr(mf.info, "channels", None)
-    except Exception:
-        pass
+        # 时长与采样率/位率/声道
+        try:
+            if mf.info is not None:
+                info["duration"] = getattr(mf.info, "length", None)
+                info["bitrate"] = getattr(mf.info, "bitrate", None)
+                info["sample_rate"] = getattr(mf.info, "sample_rate", None)
+                info["channels"] = getattr(mf.info, "channels", None)
+        except Exception:
+            pass
 
-    # 标签字段（不同格式不同 API）
-    tags = getattr(mf, "tags", None)
-    if tags is not None:
-        def _first(*keys: str) -> Optional[str]:
-            for k in keys:
-                if k in tags:
-                    vals = tags[k]
-                    if isinstance(vals, list):
-                        if vals:
-                            return str(vals[0])
-                    elif vals is not None:
-                        return str(vals)
-            return None
+        # 标签字段（不同格式不同 API）
+        tags = getattr(mf, "tags", None)
+        if tags is not None:
+            def _first(*keys: str) -> Optional[str]:
+                for k in keys:
+                    if k in tags:
+                        vals = tags[k]
+                        if isinstance(vals, list):
+                            if vals:
+                                return str(vals[0])
+                        elif vals is not None:
+                            return str(vals)
+                return None
 
-        info["title"] = _first("title", "TIT2", "\xa9nam")
-        info["artist"] = _first("artist", "TPE1", "\xa9ART")
-        info["album"] = _first("album", "TALB", "\xa9alb")
-        info["album_artist"] = _first("albumartist", "TPE2", "aART", "\xa9ART")
-        info["genre"] = _first("genre", "TCON", "\xa9gen")
+            info["title"] = _first("title", "TIT2", "\xa9nam")
+            info["artist"] = _first("artist", "TPE1", "\xa9ART")
+            info["album"] = _first("album", "TALB", "\xa9alb")
+            info["album_artist"] = _first("albumartist", "TPE2", "aART", "\xa9ART")
+            info["genre"] = _first("genre", "TCON", "\xa9gen")
 
-        trackno_raw = _first("tracknumber", "TRCK", "trkn", "\xa9trk")
-        if trackno_raw:
-            # 形如 "3/12" 或 "3"
-            info["track_no"] = _parse_int(trackno_raw.split("/")[0])
+            trackno_raw = _first("tracknumber", "TRCK", "trkn", "\xa9trk")
+            if trackno_raw:
+                # 形如 "3/12" 或 "3"
+                info["track_no"] = _parse_int(trackno_raw.split("/")[0])
 
-        year_raw = _first("date", "year", "TDRC", "\xa9day")
-        if year_raw:
-            info["year"] = _parse_int(year_raw[:4])
+            year_raw = _first("date", "year", "TDRC", "\xa9day")
+            if year_raw:
+                info["year"] = _parse_int(year_raw[:4])
 
-    # 嵌入封面/歌词检测
-    try:
-        if isinstance(mf, MP3):
-            if "APIC" in (tags or {}):
-                info["cover_embedded"] = True
-            if any(k.startswith("USLT") or k.startswith("SYLT") for k in (tags or {})):
-                info["lyrics_embedded"] = True
-        elif isinstance(mf, FLAC):
-            if mf.pictures:
-                info["cover_embedded"] = True
-            if "lyrics" in (tags or {}):
-                info["lyrics_embedded"] = True
-        elif isinstance(mf, MP4):
-            covr = tags.get("covr") if tags else None
-            if covr:
-                info["cover_embedded"] = True
-            if "\xa9lyr" in (tags or {}):
-                info["lyrics_embedded"] = True
-    except Exception:
-        pass
+        # 嵌入封面/歌词检测
+        try:
+            if isinstance(mf, (MP3, WAVE)):
+                # MP3 和 WAV 都用 ID3 tags（APIC/USLT）
+                # ID3 key 形如 "APIC:Cover" / "USLT:Lyrics"（带 desc 后缀），用 startswith 匹配
+                if any(k.startswith("APIC") for k in (tags or {})):
+                    info["cover_embedded"] = True
+                if any(k.startswith("USLT") or k.startswith("SYLT") for k in (tags or {})):
+                    info["lyrics_embedded"] = True
+            elif isinstance(mf, FLAC):
+                if mf.pictures:
+                    info["cover_embedded"] = True
+                if "lyrics" in (tags or {}):
+                    info["lyrics_embedded"] = True
+            elif isinstance(mf, MP4):
+                covr = tags.get("covr") if tags else None
+                if covr:
+                    info["cover_embedded"] = True
+                if "\xa9lyr" in (tags or {}):
+                    info["lyrics_embedded"] = True
+        except Exception:
+            pass
 
-    return info
+        return info
+    finally:
+        # Windows 上必须显式关闭，否则文件句柄泄漏导致后续写入 Bad file descriptor
+        try:
+            mf.close()
+        except Exception:
+            pass
 
 
 def _parse_int(value: str | None) -> Optional[int]:

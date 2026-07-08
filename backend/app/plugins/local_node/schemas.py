@@ -239,6 +239,21 @@ class MetadataUpdateFieldRequest(BaseModel):
     value: Optional[str] = None
 
 
+class MetadataBatchUpdateRequest(BaseModel):
+    """多字段批量保存：一次请求更新多个字段，所有 track_ids 都会被写入这些字段值。"""
+    track_ids: list[int]
+    updates: dict[str, Optional[str]] = Field(
+        default_factory=dict,
+        description="{field: value} 字段值映射，None 或空串表示清空",
+    )
+
+
+class MetadataBatchUpdateResult(BaseModel):
+    updated: int
+    fields: list[str] = []
+    skipped: list[dict] = []
+
+
 class RenameRequest(BaseModel):
     track_ids: list[int]
     template: str

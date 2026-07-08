@@ -24,20 +24,18 @@ from sqlalchemy.orm import Session
 from app.plugins.asmr_one.asmr_client import AsmrClient
 from app.plugins.asmr_one.database import SessionLocal
 from app.plugins.asmr_one.models import DownloadFileStatus, DownloadTask
-from app.plugins.asmr_one.tag_writer import (
+from app.utils.tag_writer import (
     AUDIO_EXTS,
-    write_cover_to_file,
-    write_metadata_to_file,
+    vtt_to_lrc,
+    write_lyrics_to_file,
+    write_tags_and_cover,
 )
 
 logger = logging.getLogger("etamusic.plugins.asmr_one")
 
-# 单线程下载（避免对 asmr.one 造成压力）
 _lock = threading.Lock()
 _running_tasks: dict[int, threading.Thread] = {}
 
-
-# Windows 文名非法字符替换
 _INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
 
 
@@ -51,12 +49,10 @@ def _build_target_path(
     work_title: str,
     file_rel_path: str,
 ) -> Path:
-    """构造目标文件绝对路径"""
     parts = [watch_dir_path]
     if subdir:
         parts.append(subdir.strip("/\\"))
     parts.append(_sanitize(work_title))
-    # file_rel_path 是用 / 分隔的相对路径
     for seg in file_rel_path.split("/"):
         if seg:
             parts.append(_sanitize(seg))
@@ -64,7 +60,6 @@ def _build_target_path(
 
 
 def _get_watch_dir_path(watch_dir_id: int) -> Optional[str]:
-    """通过 local_node API 查询监控目录绝对路径"""
     try:
         from app.plugins.local_node.database import SessionLocal as LocalSession
         from app.plugins.local_node.models import WatchDir
@@ -80,7 +75,6 @@ def _get_watch_dir_path(watch_dir_id: int) -> Optional[str]:
 
 
 def _trigger_local_node_scan() -> bool:
-    """直接调用 local_node 的 run_scan 触发扫描（同进程，避免 HTTP 自调用）"""
     try:
         from app.plugins.local_node.database import SessionLocal as LocalSession
         from app.plugins.local_node.models import ScanTask
@@ -110,19 +104,124 @@ def _trigger_local_node_scan() -> bool:
             pass
 
 
+def _create_album_playlist(db: Session, task: DownloadTask) -> Optional[int]:
+    try:
+        from app.plugins.local_node.database import SessionLocal as LocalSession
+        from app.plugins.local_node.models import Playlist, PlaylistItem, Track, User
+    except ImportError as e:
+        logger.warning("无法导入 local_node 模块: %s", e)
+        return None
+
+    db_local = LocalSession()
+    try:
+        file_statuses = (
+            db.query(DownloadFileStatus)
+            .filter(
+                DownloadFileStatus.task_id == task.id,
+                DownloadFileStatus.status.in_(["completed", "skipped"]),
+                DownloadFileStatus.saved_to.isnot(None),
+            )
+            .all()
+        )
+        audio_files = [
+            fs for fs in file_statuses
+            if fs.saved_to and Path(fs.saved_to).suffix.lower() in AUDIO_EXTS
+        ]
+        if not audio_files:
+            logger.info("任务 %s: 无音频文件，跳过创建播放列表", task.id)
+            return None
+
+        saved_paths = [fs.saved_to for fs in audio_files]
+        tracks = (
+            db_local.query(Track)
+            .filter(Track.abs_path.in_(saved_paths))
+            .all()
+        )
+        if not tracks:
+            logger.warning(
+                "任务 %s: 未在 local_node 找到对应 Track（可能扫描未完成），跳过播放列表创建",
+                task.id,
+            )
+            return None
+
+        admin = db_local.query(User).filter(User.is_admin.is_(True)).first()
+        if admin is None:
+            logger.warning("任务 %s: local_node 无 admin 用户，跳过播放列表创建", task.id)
+            return None
+
+        playlist_name = task.work_title or f"ASMR {task.work_id}"
+        pl = (
+            db_local.query(Playlist)
+            .filter(
+                Playlist.owner_id == admin.id,
+                Playlist.name == playlist_name,
+            )
+            .one_or_none()
+        )
+        if pl is None:
+            pl = Playlist(
+                name=playlist_name,
+                owner_id=admin.id,
+                is_system=False,
+                description=f"asmr.one work_id={task.work_id}",
+            )
+            db_local.add(pl)
+            db_local.commit()
+            db_local.refresh(pl)
+            logger.info("任务 %s: 已创建播放列表 '%s' (id=%s)", task.id, playlist_name, pl.id)
+        else:
+            logger.info("任务 %s: 播放列表 '%s' 已存在 (id=%s)，追加曲目", task.id, playlist_name, pl.id)
+
+        max_pos = (
+            db_local.query(PlaylistItem.position)
+            .filter(PlaylistItem.playlist_id == pl.id)
+            .order_by(PlaylistItem.position.desc())
+            .first()
+        )
+        next_pos = (max_pos[0] + 1) if max_pos else 0
+
+        added = 0
+        for t in tracks:
+            exists = (
+                db_local.query(PlaylistItem)
+                .filter(
+                    PlaylistItem.playlist_id == pl.id,
+                    PlaylistItem.track_id == t.id,
+                )
+                .one_or_none()
+            )
+            if exists:
+                continue
+            db_local.add(
+                PlaylistItem(
+                    playlist_id=pl.id,
+                    track_id=t.id,
+                    position=next_pos,
+                )
+            )
+            next_pos += 1
+            added += 1
+        db_local.commit()
+        logger.info(
+            "任务 %s: 播放列表 '%s' 新增 %d/%d 首曲目",
+            task.id, playlist_name, added, len(tracks),
+        )
+        return pl.id
+    except Exception as e:
+        logger.warning("任务 %s: 创建播放列表失败: %s", task.id, e)
+        return None
+    finally:
+        db_local.close()
+
+
 def _download_one(
     client: AsmrClient,
     url: str,
     target: Path,
     on_progress=None,
 ) -> int:
-    """下载单个文件到 target，返回下载字节数
-
-    on_progress(done_bytes: int, total_bytes: int)
-    """
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    # 先 HEAD 获取总大小
     total = 0
     try:
         headers = client.head(url)
@@ -130,7 +229,6 @@ def _download_one(
     except Exception:
         pass
 
-    # 已存在且同大小跳过
     if target.exists() and total > 0 and target.stat().st_size == total:
         if on_progress:
             on_progress(total, total)
@@ -148,12 +246,22 @@ def _download_one(
     return done
 
 
-def _apply_metadata_and_cover(db: Session, task: DownloadTask, client: AsmrClient) -> None:
+def _apply_metadata_and_cover(
+    db: Session,
+    task: DownloadTask,
+    client: AsmrClient,
+    cover_mode: str = "embed",
+) -> None:
     """下载完成后：把专辑/艺术家等元数据与封面回写到音频文件标签。
 
     metadata_json 结构：
-      {album, artist, album_artist, cover_type}
+      {album, artist, album_artist, source_url, cover_type}
     cover_type 取值：main / sam / 240x240，None 表示不写封面
+
+    cover_mode 取值：
+      - "embed": 仅嵌入到音频文件标签
+      - "save":  仅保存为 cover.jpg 到下载目录
+      - "both":  嵌入 + 保存 cover.jpg
     """
     meta = task.metadata_json or {}
     if not meta:
@@ -162,9 +270,11 @@ def _apply_metadata_and_cover(db: Session, task: DownloadTask, client: AsmrClien
     album = meta.get("album")
     artist = meta.get("artist")
     album_artist = meta.get("album_artist")
-    cover_type = meta.get("cover_type")  # None 表示不嵌入封面
+    source_url = meta.get("source_url")
+    cover_type = meta.get("cover_type")
 
-    # 取出所有已下载完成的文件
+    has_meta = any(v for v in (album, artist, album_artist, source_url))
+
     file_statuses = (
         db.query(DownloadFileStatus)
         .filter(
@@ -175,7 +285,6 @@ def _apply_metadata_and_cover(db: Session, task: DownloadTask, client: AsmrClien
         .all()
     )
 
-    # 仅处理音频文件
     audio_files = [
         fs for fs in file_statuses
         if fs.saved_to and Path(fs.saved_to).suffix.lower() in AUDIO_EXTS
@@ -184,42 +293,126 @@ def _apply_metadata_and_cover(db: Session, task: DownloadTask, client: AsmrClien
     if not audio_files:
         return
 
-    # 1. 回写元数据（专辑 / 艺术家 / 专辑艺术家）
-    if album or artist or album_artist:
+    need_cover = bool(cover_type) and not task.cover_applied
+    cover_bytes = None
+    cover_mime = "image/jpeg"
+    if need_cover:
+        try:
+            cover_bytes = client.get_cover_bytes(task.work_id, cover_type=cover_type)
+        except Exception as e:
+            logger.warning("任务 %s: 获取封面字节失败: %s", task.id, e)
+            need_cover = False
+
+    do_embed = cover_mode in ("embed", "both") and need_cover
+    do_save = cover_mode in ("save", "both") and need_cover
+
+    ok_cover = 0
+    ok_meta = 0
+    if do_embed or (has_meta and cover_mode != "save"):
         for fs in audio_files:
             try:
-                write_metadata_to_file(
+                success = write_tags_and_cover(
                     fs.saved_to,
-                    title=None,  # 不覆盖单文件标题（保留原文件名）
+                    title=None,
                     artist=artist,
                     album=album,
                     album_artist=album_artist,
+                    source_url=source_url,
+                    cover_bytes=cover_bytes if do_embed else None,
+                    cover_mime=cover_mime,
                 )
+                if success:
+                    ok_meta += 1
+                    if do_embed:
+                        ok_cover += 1
             except Exception as e:
-                logger.warning("回写元数据失败 %s: %s", fs.saved_to, e)
-        logger.info("任务 %s: 已为 %d 个音频文件回写元数据", task.id, len(audio_files))
+                logger.warning("回写标签/封面失败 %s: %s", fs.saved_to, e)
+        logger.info(
+            "任务 %s: 已为 %d/%d 个音频文件回写元数据，%d/%d 个嵌入封面",
+            task.id, ok_meta, len(audio_files), ok_cover, len(audio_files),
+        )
 
-    # 2. 回写封面
-    if cover_type and not task.cover_applied:
+    should_save = do_save or (do_embed and ok_cover == 0 and cover_bytes)
+    if should_save:
         try:
-            cover_bytes = client.get_cover_bytes(task.work_id, cover_type=cover_type)
-            mime = "image/jpeg"  # asmr.one cover API 返回 jpeg
-            ok_count = 0
-            for fs in audio_files:
-                try:
-                    if write_cover_to_file(fs.saved_to, cover_bytes, mime):
-                        ok_count += 1
-                except Exception as e:
-                    logger.warning("回写封面失败 %s: %s", fs.saved_to, e)
-            task.cover_applied = True
-            db.commit()
-            logger.info("任务 %s: 已为 %d/%d 个音频文件嵌入封面", task.id, ok_count, len(audio_files))
+            first_dir = Path(audio_files[0].saved_to).parent
+            cover_path = first_dir / "cover.jpg"
+            cover_path.write_bytes(cover_bytes)
+            if do_embed and ok_cover == 0:
+                logger.warning(
+                    "任务 %s: 嵌入封面全部失败，已回退保存 cover.jpg 到 %s",
+                    task.id, cover_path,
+                )
+            else:
+                logger.info("任务 %s: 封面已保存到 %s", task.id, cover_path)
         except Exception as e:
-            logger.warning("任务 %s: 获取封面字节失败: %s", task.id, e)
+            logger.warning("任务 %s: 保存 cover.jpg 失败: %s", task.id, e)
+
+    if need_cover:
+        task.cover_applied = True
+        db.commit()
+
+
+def _apply_lyrics_from_vtt(
+    db: Session,
+    task: DownloadTask,
+    client: AsmrClient,
+) -> None:
+    """下载完成后：把 VTT 字幕转换为 LRC 并嵌入音频文件歌词标签。"""
+    files_json = task.files_json or []
+    vtt_files = [f for f in files_json if f.get("path", "").lower().endswith(".vtt")]
+    if not vtt_files:
+        return
+
+    file_statuses = (
+        db.query(DownloadFileStatus)
+        .filter(
+            DownloadFileStatus.task_id == task.id,
+            DownloadFileStatus.status.in_(["completed", "skipped"]),
+            DownloadFileStatus.saved_to.isnot(None),
+        )
+        .all()
+    )
+    audio_files = [
+        fs for fs in file_statuses
+        if fs.saved_to and Path(fs.saved_to).suffix.lower() in AUDIO_EXTS
+    ]
+    if not audio_files:
+        return
+
+    for vtt_file in vtt_files:
+        vtt_path = vtt_file.get("path", "")
+        vtt_name = Path(vtt_path).stem
+        try:
+            vtt_url = vtt_file.get("url")
+            if not vtt_url:
+                continue
+            resp = client.session.get(vtt_url, timeout=30)
+            resp.raise_for_status()
+            vtt_content = resp.text
+            lrc_text = vtt_to_lrc(vtt_content)
+            if not lrc_text:
+                continue
+        except Exception as e:
+            logger.warning("任务 %s: 下载 VTT 失败 %s: %s", task.id, vtt_path, e)
+            continue
+
+        matched = [
+            fs for fs in audio_files
+            if Path(fs.saved_to).stem == vtt_name
+        ]
+        if not matched:
+            matched = audio_files[:1]
+
+        for fs in matched:
+            try:
+                if write_lyrics_to_file(fs.saved_to, lrc_text):
+                    logger.info("任务 %s: 已写入歌词到 %s", task.id, fs.saved_to)
+            except Exception as e:
+                logger.warning("任务 %s: 写入歌词失败 %s: %s", task.id, fs.saved_to, e)
 
 
 def _worker(task_id: int) -> None:
-    """后台线程入口"""
     db = SessionLocal()
     try:
         task = db.get(DownloadTask, task_id)
@@ -230,7 +423,6 @@ def _worker(task_id: int) -> None:
         task.updated_at = datetime.utcnow()
         db.commit()
 
-        # 取出文件清单
         files: list[dict] = task.files_json or []
         selected: set[str] = set(task.selected_paths or [])
         if selected:
@@ -239,7 +431,6 @@ def _worker(task_id: int) -> None:
         task.total_files = len(files)
         db.commit()
 
-        # 查询目标 watch_dir 路径
         watch_dir_path = _get_watch_dir_path(task.target_watch_dir_id)
         if not watch_dir_path:
             task.status = "failed"
@@ -248,7 +439,6 @@ def _worker(task_id: int) -> None:
             db.commit()
             return
 
-        # 创建客户端
         from app.plugins.asmr_one.routers import _get_settings_dict
 
         settings = _get_settings_dict(db)
@@ -260,11 +450,9 @@ def _worker(task_id: int) -> None:
         failed = 0
         errors: list[str] = []
 
-        # 清理旧 file status
         db.query(DownloadFileStatus).filter(DownloadFileStatus.task_id == task_id).delete()
         db.commit()
 
-        # 创建 file status 记录
         for f in files:
             db.add(
                 DownloadFileStatus(
@@ -278,7 +466,6 @@ def _worker(task_id: int) -> None:
         db.commit()
 
         for idx, f in enumerate(files):
-            # 重新查询任务，检查是否被取消
             db.refresh(task)
             if task.status == "canceled":
                 return
@@ -318,7 +505,6 @@ def _worker(task_id: int) -> None:
                 file_rel_path=file_path,
             )
 
-            # 跳过已存在且同大小
             if target.exists() and task.current_file_size > 0 and target.stat().st_size == task.current_file_size:
                 skipped += 1
                 if file_status:
@@ -332,7 +518,7 @@ def _worker(task_id: int) -> None:
                     task.current_file_done = done
                     if file_status:
                         file_status.done = done
-                    # 不每次 commit，每 5% commit 一次
+
                 downloaded = _download_one(client, url, target, on_progress=on_progress)
                 completed += 1
                 if file_status:
@@ -353,7 +539,6 @@ def _worker(task_id: int) -> None:
             task.updated_at = datetime.utcnow()
             db.commit()
 
-        # 最终状态
         if failed == 0:
             task.status = "completed"
         elif completed == 0 and skipped == 0:
@@ -365,11 +550,11 @@ def _worker(task_id: int) -> None:
         task.current_file = None
         db.commit()
 
-        # 下载完成后：把元数据（专辑/艺术家）与封面回写到音频文件标签
         if completed > 0 or skipped > 0:
             _apply_metadata_and_cover(db, task, client)
+            _apply_lyrics_from_vtt(db, task, client)
+            _create_album_playlist(db, task)
 
-        # 触发扫描
         if completed > 0 or skipped > 0:
             _trigger_local_node_scan()
 
@@ -391,7 +576,6 @@ def _worker(task_id: int) -> None:
 
 
 def start_download_task(task_id: int) -> None:
-    """启动后台下载线程"""
     with _lock:
         if task_id in _running_tasks:
             return
@@ -401,7 +585,6 @@ def start_download_task(task_id: int) -> None:
 
 
 def cancel_download_task(task_id: int) -> bool:
-    """请求取消任务（标记为 canceled，线程下次循环检测到会退出）"""
     db = SessionLocal()
     try:
         task = db.get(DownloadTask, task_id)

@@ -248,9 +248,10 @@ export async function deleteDownload(taskId) {
   await client.delete(`/api/asmr/downloads/${taskId}`)
 }
 
-export async function applyCover(taskId, coverType) {
+export async function applyCover(taskId, coverType, coverMode = 'embed') {
   const r = await client.post(`/api/asmr/downloads/${taskId}/apply-cover`, {
-    cover_type: coverType
+    cover_type: coverType,
+    cover_mode: coverMode
   }, { timeout: 120000 })
   return r.data
 }

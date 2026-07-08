@@ -81,7 +81,7 @@ def _check_track_visible(db: Session, track_id: int, user: User) -> Track:
 @router.get("", response_model=PaginatedTracks)
 def list_tracks(
     page: int = Query(1, ge=1),
-    size: int = Query(50, ge=1, le=500),
+    size: int = Query(50, ge=1, le=100000),
     q: Optional[str] = None,
     playlist_id: Optional[int] = None,
     artist: Optional[str] = None,
@@ -248,49 +248,78 @@ def _parse_range(range_header: str, file_size: int) -> tuple[int, int]:
 def get_cover(
     track_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user_dependency),
+    user: User = Depends(get_user_from_query_token),
 ):
-    """提取并返回嵌入封面图"""
+    """提取并返回封面图
+
+    优先级：
+    1. 音频文件内嵌封面（APIC / pictures / covr）
+    2. 同级目录的 cover.jpg / cover.png / folder.jpg（asmr.one 下载或手动放置）
+
+    JWT 通过 query 参数 ?token= 传递，便于 <img src> 直接加载。
+    """
     track = _check_track_visible(db, track_id, user)
-    if not track.cover_embedded:
-        raise HTTPException(status_code=404, detail="无嵌入封面")
-    try:
-        mf = MutagenFile(track.abs_path)
-    except Exception:
-        raise HTTPException(status_code=500, detail="读取文件失败")
 
-    image_bytes: Optional[bytes] = None
-    mime = "image/jpeg"
-    try:
-        if mf is not None:
-            # FLAC：pictures 属性
-            pics = getattr(mf, "pictures", None)
-            if pics:
-                image_bytes = pics[0].data
-                mime = getattr(pics[0], "mime", mime) or mime
-            tags = getattr(mf, "tags", None)
-            # MP3 ID3 APIC
-            if image_bytes is None and tags is not None:
-                for k in tags:
-                    if k.startswith("APIC"):
-                        apic = tags[k]
-                        if hasattr(apic, "data"):
-                            image_bytes = apic.data
-                            mime = getattr(apic, "mime", mime) or mime
-                            break
-            # MP4 covr
-            if image_bytes is None and isinstance(mf, MP4):
-                covr = mf.tags.get("covr") if mf.tags else None
-                if covr:
-                    image_bytes = bytes(covr[0])
-                    mime = "image/png" if image_bytes[:4] == b"\x89PNG" else "image/jpeg"
-    except Exception:
-        raise HTTPException(status_code=500, detail="提取封面失败")
+    # 1. 尝试内嵌封面
+    if track.cover_embedded:
+        mf = None
+        image_bytes: Optional[bytes] = None
+        mime = "image/jpeg"
+        try:
+            mf = MutagenFile(track.abs_path)
+        except Exception:
+            mf = None
 
-    if not image_bytes:
-        raise HTTPException(status_code=404, detail="未找到封面数据")
+        try:
+            if mf is not None:
+                # FLAC：pictures 属性
+                pics = getattr(mf, "pictures", None)
+                if pics:
+                    image_bytes = pics[0].data
+                    mime = getattr(pics[0], "mime", mime) or mime
+                tags = getattr(mf, "tags", None)
+                # MP3 ID3 APIC
+                if image_bytes is None and tags is not None:
+                    for k in tags:
+                        if k.startswith("APIC"):
+                            apic = tags[k]
+                            if hasattr(apic, "data"):
+                                image_bytes = apic.data
+                                mime = getattr(apic, "mime", mime) or mime
+                                break
+                # MP4 covr
+                if image_bytes is None and isinstance(mf, MP4):
+                    covr = mf.tags.get("covr") if mf.tags else None
+                    if covr:
+                        image_bytes = bytes(covr[0])
+                        mime = "image/png" if image_bytes[:4] == b"\x89PNG" else "image/jpeg"
+        except Exception:
+            image_bytes = None
+        finally:
+            # Windows 上必须显式关闭，否则文件句柄泄漏导致后续写入 Bad file descriptor
+            if mf is not None:
+                try:
+                    mf.close()
+                except Exception:
+                    pass
 
-    return Response(content=image_bytes, media_type=mime)
+        if image_bytes:
+            return Response(content=image_bytes, media_type=mime)
+
+    # 2. 回退：同级目录的 cover.jpg / cover.png / folder.jpg
+    cover_candidates = ["cover.jpg", "cover.png", "folder.jpg", "folder.png"]
+    track_dir = Path(track.abs_path).parent
+    for name in cover_candidates:
+        cover_path = track_dir / name
+        if cover_path.is_file():
+            try:
+                data = cover_path.read_bytes()
+                ext_mime = "image/png" if name.endswith(".png") else "image/jpeg"
+                return Response(content=data, media_type=ext_mime)
+            except Exception:
+                continue
+
+    raise HTTPException(status_code=404, detail="未找到封面数据")
 
 
 @router.get("/{track_id}/lyrics")
@@ -314,9 +343,18 @@ def get_lyrics(
             tags = getattr(mf, "tags", None)
             if tags is not None:
                 # MP3 USLT
+                # 注意：mutagen 的 USLT.text 可能是 list[str]（规范）也可能是 str（部分写入工具），
+                # 不能直接 [0]，否则字符串会被取首字符 → 只剩 "["
                 for k in tags:
                     if k.startswith("USLT"):
-                        lyrics = str(tags[k].text[0]) if getattr(tags[k], "text", None) else ""
+                        uslt = tags[k]
+                        text_val = getattr(uslt, "text", None)
+                        if isinstance(text_val, list):
+                            lyrics = "".join(str(x) for x in text_val)
+                        elif text_val is not None:
+                            lyrics = str(text_val)
+                        else:
+                            lyrics = ""
                         break
                 if lyrics is None and "lyrics" in tags:  # FLAC
                     v = tags["lyrics"]
@@ -325,7 +363,16 @@ def get_lyrics(
                     v = tags["\xa9lyr"]
                     lyrics = v[0] if isinstance(v, list) else str(v)
     except Exception:
+        try:
+            mf.close()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail="提取歌词失败")
+    finally:
+        try:
+            mf.close()
+        except Exception:
+            pass
 
     if not lyrics:
         raise HTTPException(status_code=404, detail="未找到歌词")
