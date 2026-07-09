@@ -16,7 +16,9 @@ export const usePluginsStore = defineStore('plugins', () => {
     plugins.value.filter((p) => p.enabled).map((p) => p.name)
   )
 
-  const hasNodePlugin = computed(() => enabledNames.value.length > 0)
+  const hasNodePlugin = computed(() =>
+    plugins.value.some((p) => p.enabled && p.loaded && p.name.includes('node'))
+  )
 
   async function load() {
     try {
@@ -44,19 +46,24 @@ export const usePluginsStore = defineStore('plugins', () => {
       const status = await getLocalNodeStatus()
       localNode.value = status
 
+      if (!status.available) {
+        const existing = nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
+        if (existing) {
+          nodesStore.removeNode(existing.id)
+        }
+        return status
+      }
+
       const existing = nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
 
-      if (status.available && status.access_token) {
-        // 插件可用且有 token：自动写入/更新
+      if (status.access_token) {
         const token = status.access_token
         const userInfo = status.user_info
         if (existing) {
-          // 更新 token（若变化）
           if (existing.token !== token) {
             nodesStore.updateNode(existing.id, { token, userInfo })
           }
         } else {
-          // 新增本地节点记录
           const added = nodesStore.addNode({
             name: '本地节点',
             baseUrl: '/local_node',
@@ -65,19 +72,15 @@ export const usePluginsStore = defineStore('plugins', () => {
           })
           nodesStore.updateNode(added.id, { token, userInfo })
         }
-        // 若当前没有激活节点，激活本地节点
         if (!nodesStore.activeNodeId) {
           const target = nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
           if (target) nodesStore.setActive(target.id)
         }
-      } else if (!status.available && existing) {
-        // 插件不可用：移除本地节点记录
-        nodesStore.removeNode(existing.id)
       }
 
       return status
     } catch (e) {
-      localNode.value = { available: false, message: '无法获取本地节点状态' }
+      localNode.value = { available: false }
       return localNode.value
     }
   }

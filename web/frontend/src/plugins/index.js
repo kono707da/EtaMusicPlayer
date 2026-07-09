@@ -1,15 +1,25 @@
 /**
  * 前端插件注册表
  *
- * 所有可用插件的前端 manifest 静态导入（Vite 兼容），
+ * 所有可用插件的前端 manifest 动态导入，
  * 运行时根据后端返回的 enabledNames 过滤，动态注册路由/导航/预设。
+ * 插件模块缺失时不影响基础程序运行。
  */
-import local_node from './local_node'
 import asmr_one from './asmr_one'
 import bili_audio from './bili_audio'
 
-// 所有已编写的前端插件 manifest
-const allPlugins = [local_node, asmr_one, bili_audio]
+let local_node = null
+try {
+  const modules = import.meta.glob('./local_node/index.js', { eager: true })
+  const mod = modules['./local_node/index.js']
+  if (mod) {
+    local_node = mod.default || mod
+  }
+} catch (e) {
+  // local_node 插件前端模块不存在，跳过
+}
+
+const allPlugins = [local_node, asmr_one, bili_audio].filter(Boolean)
 
 /**
  * 获取已启用插件的 manifest 列表
