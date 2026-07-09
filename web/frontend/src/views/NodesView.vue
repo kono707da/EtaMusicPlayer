@@ -154,36 +154,16 @@ onMounted(() => {
       </Button>
     </div>
 
-    <!-- 本地节点卡片（置顶） -->
-    <div class="rounded-lg border border-primary/30 bg-card shadow-sm overflow-hidden">
+    <!-- 本地节点卡片（仅插件可用时显示） -->
+    <div v-if="localNode?.available" class="rounded-lg border border-primary/30 bg-card shadow-sm overflow-hidden">
       <div class="flex items-center gap-3 border-b border-border bg-primary/5 px-4 py-2.5">
         <HardDrive class="h-4 w-4 text-primary" />
         <span class="text-sm font-medium text-foreground">本机节点</span>
         <span class="text-xs text-muted-foreground">由 local_node 插件提供，插件启用即自动连接</span>
       </div>
 
-      <!-- 加载中 -->
-      <div v-if="!localNode" class="flex items-center gap-2 px-4 py-6 text-muted-foreground">
-        <Loader2 class="h-4 w-4 animate-spin" />
-        正在获取本地节点状态...
-      </div>
-
-      <!-- 插件未安装/未启用 -->
-      <div v-else-if="!localNode?.available" class="px-4 py-6">
-        <div class="flex items-center gap-2 text-muted-foreground mb-2">
-          <Server class="h-5 w-5" />
-          <span class="font-medium text-foreground">本地节点不可用</span>
-        </div>
-        <p class="text-sm text-muted-foreground">
-          {{ localNode?.message || '请前往插件管理启用 local_node 插件' }}
-        </p>
-        <Button variant="secondary" size="sm" class="mt-3" @click="$router.push('/plugins')">
-          前往插件管理
-        </Button>
-      </div>
-
       <!-- 本地节点已连接（自动） -->
-      <div v-else class="flex items-center justify-between gap-4 px-4 py-4">
+      <div class="flex items-center justify-between gap-4 px-4 py-4">
         <div class="flex items-center gap-4">
           <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
             <HardDrive class="h-6 w-6 text-primary" />

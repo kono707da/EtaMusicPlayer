@@ -266,50 +266,57 @@ def local_node_status(db: Session = Depends(get_db)) -> dict:
     - access_token: admin 用户的 JWT（仅当 available=true 时返回）
     - user_info: admin 用户信息
     """
+    if "local_node" not in _loaded_in_process:
+        return {
+            "available": False,
+            "loaded": False,
+            "base_url": None,
+            "message": "local_node 插件未安装或未启用",
+        }
+
     plugin = db.query(Plugin).filter(Plugin.name == "local_node").one_or_none()
     if plugin is None:
         return {
             "available": False,
             "loaded": False,
             "base_url": None,
-            "message": "本地节点插件未安装",
+            "message": "local_node 插件未安装或未启用",
         }
-    discovered = set(discover_plugins())
-    files_present = plugin.name in discovered
-    available = plugin.enabled and files_present
-    loaded = "local_node" in _loaded_in_process
 
     result = {
-        "available": available,
-        "loaded": loaded,
-        "base_url": "/local_node" if plugin.enabled else None,
+        "available": True,
+        "loaded": True,
+        "base_url": "/local_node",
         "name": "本地节点",
         "description": plugin.description,
         "version": plugin.version,
-        "message": "" if plugin.enabled else "本地节点插件未启用",
+        "message": "",
     }
 
-    if available and loaded:
-        try:
-            from eta_web.security import create_access_token
-            from eta_node.database import SessionLocal as LocalSession
-            from eta_node.models import User as LocalUser
-        except ImportError:
-            pass
-        else:
-            local_db = LocalSession()
-            try:
-                admin = local_db.query(LocalUser).filter(LocalUser.username == "admin").one_or_none()
-                if admin:
-                    token = create_access_token(admin.id)
-                    result["access_token"] = token
-                    result["user_info"] = {
-                        "id": admin.id,
-                        "username": admin.username,
-                        "is_admin": admin.is_admin,
-                    }
-            finally:
-                local_db.close()
+    try:
+        from eta_web.security import create_access_token
+        from eta_node.database import SessionLocal as LocalSession
+        from eta_node.models import User as LocalUser
+    except ImportError:
+        result["available"] = False
+        result["loaded"] = False
+        result["base_url"] = None
+        result["message"] = "local_node 插件未安装或未启用"
+        return result
+
+    local_db = LocalSession()
+    try:
+        admin = local_db.query(LocalUser).filter(LocalUser.username == "admin").one_or_none()
+        if admin:
+            token = create_access_token(admin.id)
+            result["access_token"] = token
+            result["user_info"] = {
+                "id": admin.id,
+                "username": admin.username,
+                "is_admin": admin.is_admin,
+            }
+    finally:
+        local_db.close()
 
     return result
 

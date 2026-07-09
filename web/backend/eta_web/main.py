@@ -92,7 +92,8 @@ if os.path.isdir(FRONTEND_DIST):
     @app.exception_handler(StarletteHTTPException)
     async def spa_fallback(request: Request, exc: StarletteHTTPException):
         path = request.url.path
-        if path.startswith(("/api/", "/local_node/", "/docs", "/openapi.json", "/health")):
+        plugin_prefixes = tuple(f"/{name}/" for name in _loaded_plugins)
+        if path.startswith(("/api/", "/docs", "/openapi.json", "/health") + plugin_prefixes):
             return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
         if exc.status_code == 404:
             file_path = os.path.join(FRONTEND_DIST, path.lstrip("/"))
