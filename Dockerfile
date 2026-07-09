@@ -1,9 +1,9 @@
 FROM node:20-alpine AS frontend-builder
 
 WORKDIR /build/frontend
-COPY frontend/package.json frontend/package-lock.json ./
+COPY web/frontend/package.json web/frontend/package-lock.json ./
 RUN npm ci
-COPY frontend/ ./
+COPY web/frontend/ ./
 RUN npm run build
 
 FROM python:3.12-slim
@@ -14,22 +14,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt requests
+COPY web/backend/requirements.txt /app/web/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/web/backend/requirements.txt
 
-COPY backend/ /app/backend/
+COPY node/requirements.txt /app/node/requirements.txt
+RUN pip install --no-cache-dir -r /app/node/requirements.txt
 
-COPY --from=frontend-builder /build/frontend/dist /app/frontend/dist
+COPY plugins/asmr_one/requirements.txt /app/plugins/asmr_one/requirements.txt
+RUN pip install --no-cache-dir -r /app/plugins/asmr_one/requirements.txt
 
-ENV ETA_HOST=0.0.0.0
-ENV ETA_PORT=8000
+COPY plugins/bili_audio/requirements.txt /app/plugins/bili_audio/requirements.txt
+RUN pip install --no-cache-dir -r /app/plugins/bili_audio/requirements.txt
 
-RUN mkdir -p /app/backend/data /app/backend/data/uploads
+COPY plugins/shared/requirements.txt /app/plugins/shared/requirements.txt
+RUN pip install --no-cache-dir -r /app/plugins/shared/requirements.txt
+
+COPY web/backend/ /app/web/backend/
+COPY node/ /app/node/
+COPY plugins/ /app/plugins/
+
+COPY --from=frontend-builder /build/frontend/dist /app/web/frontend/dist
+
+RUN mkdir -p /app/web/backend/data /app/node/data /app/plugins/asmr_one/data /app/plugins/bili_audio/data
 
 EXPOSE 8000
 
-VOLUME ["/app/backend/data"]
+VOLUME ["/app/web/backend/data", "/app/node/data"]
 
-WORKDIR /app/backend
+ENV TZ=Asia/Shanghai
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+WORKDIR /app/web/backend
+
+CMD ["python", "-m", "uvicorn", "eta_web.main:app", "--host", "0.0.0.0", "--port", "8000"]

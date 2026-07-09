@@ -17,7 +17,7 @@ function Get-PortOwners {
             Pid       = $pid_
             Name      = $proc.Name
             CmdLine   = $proc.CommandLine
-            IsOurs    = ($proc.CommandLine -like '*app.main:app*') -or ($proc.CommandLine -like '*uvicorn*--port 8000*')
+            IsOurs    = ($proc.CommandLine -like '*app.main:app*') -or ($proc.CommandLine -like '*eta_web.main:app*') -or ($proc.CommandLine -like '*uvicorn*--port 8000*')
         }
     }
     return $owners

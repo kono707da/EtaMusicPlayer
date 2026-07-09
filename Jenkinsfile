@@ -2,9 +2,10 @@ pipeline {
     agent any
 
     environment {
-        REGISTRY        = '192.168.188.18:5000'
-        DOCKER_IMAGE    = "192.168.188.18:5000/etamusic"
-        DOCKER_TAG      = "${BUILD_NUMBER}"
+        REGISTRY      = '192.168.188.18:5000'
+        IMAGE_NAME    = 'etamusic'
+        IMAGE_TAG     = "${REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER}"
+        IMAGE_LATEST  = "${REGISTRY}/${IMAGE_NAME}:latest"
     }
 
     stages {
@@ -15,16 +16,16 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build Image') {
             steps {
-                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -t ${DOCKER_IMAGE}:latest ."
+                sh "docker build -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
             }
         }
 
         stage('Push to Registry') {
             steps {
-                sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                sh "docker push ${DOCKER_IMAGE}:latest"
+                sh "docker push ${IMAGE_TAG}"
+                sh "docker push ${IMAGE_LATEST}"
             }
         }
 
@@ -35,7 +36,7 @@ pipeline {
                         configName: 'hongkong',
                         transfers: [
                             sshTransfer(
-                                execCommand: "docker pull ${DOCKER_IMAGE}:latest && docker stop etamusic 2>/dev/null || true && docker rm etamusic 2>/dev/null || true && docker run -d --name etamusic --restart unless-stopped -p 8000:8000 -v etamusic-data:/app/backend/data -e ETA_HOST=0.0.0.0 -e ETA_PORT=8000 -e ETA_SELF_URL=http://38.92.9.207:8000 ${DOCKER_IMAGE}:latest"
+                                execCommand: "docker pull ${IMAGE_LATEST} && docker stop etamusic 2>/dev/null || true && docker rm etamusic 2>/dev/null || true && docker run -d --name etamusic --restart unless-stopped -p 8000:8000 -v etamusic-web-data:/app/web/backend/data -v etamusic-node-data:/app/node/data -e TZ=Asia/Shanghai ${IMAGE_LATEST}"
                             )
                         ]
                     )
@@ -46,13 +47,13 @@ pipeline {
 
     post {
         success {
-            echo '部署成功！访问地址: http://38.92.9.207:8000'
+            echo '部署成功！'
         }
         failure {
             echo '部署失败，请检查 Jenkins 日志'
         }
         always {
-            sh "docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} 2>/dev/null || true"
+            sh "docker rmi ${IMAGE_TAG} ${IMAGE_LATEST} ${IMAGE_NAME} 2>/dev/null || true"
             cleanWs()
         }
     }

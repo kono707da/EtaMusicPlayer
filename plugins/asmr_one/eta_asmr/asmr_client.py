@@ -1,0 +1,635 @@
+"""asmr.one API 客户端
+
+所有请求经配置的代理（默认 127.0.0.1:7897）发出。
+API 文档：https://api.asmr.one
+"""
+from __future__ import annotations
+
+from typing import Any, Optional
+
+import requests
+
+API_BASE = "https://api.asmr.one/api"
+
+DEFAULT_TIMEOUT = 30
+DOWNLOAD_TIMEOUT = 60
+STREAM_CHUNK = 64 * 1024
+
+
+class AsmrError(Exception):
+    pass
+
+
+class AsmrClient:
+    """asmr.one API 客户端，通过 requests + 代理访问"""
+
+    def __init__(self, proxy_url: Optional[str] = "http://127.0.0.1:7897") -> None:
+        self.proxy_url = proxy_url
+
+    def _proxies(self) -> Optional[dict]:
+        if not self.proxy_url:
+            return None
+        return {"http": self.proxy_url, "https": self.proxy_url}
+
+    def search(
+        self,
+        keyword: str,
+        page: int = 1,
+        page_size: int = 20,
+        order_by: str = "create_date",
+        sort: str = "desc",
+        subtitle: int = 0,
+    ) -> dict:
+        """关键词搜索作品
+
+        subtitle: 1=仅含字幕, 0=不筛选（asmr.one 要求整数，传字符串会 400）
+        """
+        url = f"{API_BASE}/search/{keyword}"
+        params: dict = {
+            "page": page,
+            "pageSize": page_size,
+            "orderBy": order_by,
+            "sort": sort,
+        }
+        if subtitle:
+            params["subtitle"] = int(subtitle)
+        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def list_works(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        order_by: str = "create_date",
+        sort: str = "desc",
+        subtitle: int = 0,
+    ) -> dict:
+        """列出全部作品（不带关键词），支持排序
+
+        asmr.one 的 /api/works 端点。orderBy 可选：
+        create_date / dl_count / release / rate_average_2dp / review_count / price / random
+        sort 可选：asc / desc
+        subtitle: 1=仅含字幕, 0=不筛选
+        """
+        url = f"{API_BASE}/works"
+        params: dict = {
+            "page": page,
+            "pageSize": page_size,
+            "orderBy": order_by,
+            "sort": sort,
+        }
+        if subtitle:
+            params["subtitle"] = int(subtitle)
+        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def list_by_tag(
+        self,
+        tag_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        order_by: str = "create_date",
+        sort: str = "desc",
+        subtitle: int = 0,
+    ) -> dict:
+        """按标签筛选作品
+
+        asmr.one 的 /api/tags/{id}/works 端点。
+        注意：该端点 orderBy 实测不生效，结果顺序固定（按收录时间倒序）。
+        subtitle: 1=仅含字幕, 0=不筛选
+        """
+        url = f"{API_BASE}/tags/{tag_id}/works"
+        params: dict = {
+            "page": page,
+            "pageSize": page_size,
+            "orderBy": order_by,
+            "sort": sort,
+        }
+        if subtitle:
+            params["subtitle"] = int(subtitle)
+        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def list_by_va(
+        self,
+        va_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        order_by: str = "create_date",
+        sort: str = "desc",
+        subtitle: int = 0,
+    ) -> dict:
+        """按声优筛选作品
+
+        asmr.one 的 /api/vas/{id}/works 端点。va_id 为 UUID 字符串。
+        subtitle: 1=仅含字幕, 0=不筛选
+        """
+        url = f"{API_BASE}/vas/{va_id}/works"
+        params: dict = {
+            "page": page,
+            "pageSize": page_size,
+            "orderBy": order_by,
+            "sort": sort,
+        }
+        if subtitle:
+            params["subtitle"] = int(subtitle)
+        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def list_by_circle(
+        self,
+        circle_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        order_by: str = "create_date",
+        sort: str = "desc",
+        subtitle: int = 0,
+    ) -> dict:
+        """按社团筛选作品
+
+        asmr.one 的 /api/circles/{id}/works 端点。
+        subtitle: 1=仅含字幕, 0=不筛选
+        """
+        url = f"{API_BASE}/circles/{circle_id}/works"
+        params: dict = {
+            "page": page,
+            "pageSize": page_size,
+            "orderBy": order_by,
+            "sort": sort,
+        }
+        if subtitle:
+            params["subtitle"] = int(subtitle)
+        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def get_work(self, work_id: int) -> dict:
+        """获取作品详情"""
+        url = f"{API_BASE}/work/{work_id}"
+        r = requests.get(url, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def get_work_info(self, work_id: int) -> dict:
+        """获取作品额外信息（workInfo）"""
+        url = f"{API_BASE}/workInfo/{work_id}"
+        r = requests.get(url, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    # ===== 认证 =====
+
+    def check_auth(self) -> dict:
+        """检查登录状态 / 是否允许注册
+
+        GET /api/auth/me 返回 {user: {loggedIn: bool, ...}, auth: bool, reg: bool}
+        """
+        r = requests.get(f"{API_BASE}/auth/me", proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def check_reg_enabled(self) -> dict:
+        """检查是否允许注册"""
+        r = requests.get(f"{API_BASE}/auth/reg", proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def login(self, name: str, password: str) -> dict:
+        """登录
+
+        POST /api/auth/me body {name, password} headers {Authorization: null}
+        成功返回 {token: "...", user: {...}}
+        """
+        r = requests.post(
+            f"{API_BASE}/auth/me",
+            json={"name": name, "password": password},
+            headers={"Authorization": None},  # 关键：覆盖掉默认的 Authorization 头
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        # 401 时 raise_for_status 会抛错，但我们要保留错误信息
+        if r.status_code == 401:
+            try:
+                err = r.json()
+            except Exception:
+                err = {"error": r.text}
+            raise AsmrError(err.get("error", "登录失败"))
+        r.raise_for_status()
+        return r.json()
+
+    def register(self, name: str, password: str, recommender_uuid: str = None) -> dict:
+        """注册"""
+        body: dict = {"name": name, "password": password}
+        if recommender_uuid:
+            body["recommenderUuid"] = recommender_uuid
+        r = requests.post(
+            f"{API_BASE}/auth/reg",
+            json=body,
+            headers={"Authorization": None},
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code >= 400:
+            try:
+                err = r.json()
+            except Exception:
+                err = {"error": r.text}
+            raise AsmrError(err.get("error", f"注册失败 ({r.status_code})"))
+        return r.json()
+
+    def _auth_headers(self, token: str) -> dict:
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
+    # ===== 评价 / 评分 =====
+
+    def list_reviews(
+        self,
+        token: str,
+        order: str = "create_date",
+        sort: str = "desc",
+        page: int = 1,
+        filter: str = "",
+    ) -> dict:
+        """获取我的评价列表"""
+        params: dict = {"order": order, "sort": sort, "page": page}
+        # asmr.one 不接受 filter 空字符串，会返回 400
+        if filter:
+            params["filter"] = filter
+        r = requests.get(
+            f"{API_BASE}/review",
+            params=params,
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def upsert_review(
+        self,
+        token: str,
+        work_id: int,
+        rating: int,
+        review_text: str = "",
+        progress: str = "",
+    ) -> dict:
+        """提交/更新评价"""
+        r = requests.put(
+            f"{API_BASE}/review",
+            json={
+                "work_id": work_id,
+                "rating": rating,
+                "review_text": review_text,
+                "progress": progress,
+            },
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def delete_review(self, token: str, work_id: int) -> dict:
+        """删除评价"""
+        r = requests.delete(
+            f"{API_BASE}/review",
+            params={"work_id": work_id},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json() if r.text else {"ok": True}
+
+    # ===== 播放列表 / 收藏 =====
+
+    def list_playlists(
+        self, token: str, page: int = 1, page_size: int = 20, filter_by: str = ""
+    ) -> dict:
+        """列出我的所有播放列表"""
+        params: dict = {"page": page, "pageSize": page_size}
+        # asmr.one 不接受空字符串 filterBy
+        if filter_by:
+            params["filterBy"] = filter_by
+        r = requests.get(
+            f"{API_BASE}/playlist/get-playlists",
+            params=params,
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def delete_playlist(self, token: str, playlist_id) -> dict:
+        """删除播放列表"""
+        r = requests.post(
+            f"{API_BASE}/playlist/delete-playlist",
+            json={"id": playlist_id},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json() if r.text else {"ok": True}
+
+    def get_default_playlist(self, token: str) -> dict:
+        """获取默认收藏目标播放列表"""
+        r = requests.get(
+            f"{API_BASE}/playlist/get-default-mark-target-playlist",
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def get_playlist_metadata(self, token: str, playlist_id) -> dict:
+        """获取播放列表元数据（不含作品列表，asmr.one 此接口 works 字段为 null）"""
+        r = requests.get(
+            f"{API_BASE}/playlist/get-playlist-metadata",
+            params={"id": playlist_id},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def list_playlist_works(
+        self, token: str, playlist_id, page: int = 1, page_size: int = 50
+    ) -> dict:
+        """获取播放列表内的作品列表（分页）"""
+        r = requests.get(
+            f"{API_BASE}/playlist/get-playlist-works",
+            params={"id": playlist_id, "page": page, "pageSize": page_size},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def get_work_in_my_playlists(
+        self, token: str, work_id: int, page: int = 1, page_size: int = 50
+    ) -> dict:
+        """查询作品在我的播放列表中的存在状态"""
+        r = requests.get(
+            f"{API_BASE}/playlist/get-work-exist-status-in-my-playlists",
+            params={"workID": work_id, "page": page, "pageSize": page_size, "version": 2},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def create_playlist(
+        self,
+        token: str,
+        name: str,
+        privacy: int = 0,
+        locale: str = "zh-cn",
+        description: str = "",
+        works: list = None,
+    ) -> dict:
+        """创建播放列表"""
+        r = requests.post(
+            f"{API_BASE}/playlist/create-playlist",
+            json={
+                "name": name,
+                "privacy": privacy,
+                "locale": locale,
+                "description": description,
+                "works": works or [],
+            },
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def add_works_to_playlist(self, token: str, playlist_id, works: list) -> dict:
+        """添加作品到播放列表"""
+        r = requests.post(
+            f"{API_BASE}/playlist/add-works-to-playlist",
+            json={"id": playlist_id, "works": works},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def remove_works_from_playlist(self, token: str, playlist_id, works: list) -> dict:
+        """从播放列表移除作品"""
+        r = requests.post(
+            f"{API_BASE}/playlist/remove-works-from-playlist",
+            json={"id": playlist_id, "works": works},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    # ===== 推荐 =====
+
+    def popular_works(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str = "",
+        subtitle: bool = False,
+        token: str = None,
+    ) -> dict:
+        """热门作品（无需登录）"""
+        body: dict = {"page": page, "pageSize": page_size}
+        if keyword:
+            body["keyword"] = keyword
+        if subtitle:
+            body["subtitle"] = subtitle
+        r = requests.post(
+            f"{API_BASE}/recommender/popular",
+            json=body,
+            headers=self._auth_headers(token) if token else {},
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def recommend_for_user(
+        self,
+        token: str,
+        page: int = 1,
+        page_size: int = 20,
+        keyword: str = "",
+        recommender_uuid: str = None,
+        subtitle: bool = False,
+    ) -> dict:
+        """个性化推荐（需登录）"""
+        body: dict = {"page": page, "pageSize": page_size}
+        if keyword:
+            body["keyword"] = keyword
+        if recommender_uuid:
+            body["recommenderUuid"] = recommender_uuid
+        if subtitle:
+            body["subtitle"] = subtitle
+        r = requests.post(
+            f"{API_BASE}/recommender/recommend-for-user",
+            json=body,
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json()
+
+    def item_neighbors(self, item_id: int, token: str = None) -> dict:
+        """相似作品推荐"""
+        r = requests.post(
+            f"{API_BASE}/recommender/item-neighbors",
+            json={"itemId": item_id},
+            headers=self._auth_headers(token) if token else {},
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def recommender_feedback(
+        self, token: str, feedback_type: str, recommender_uuid: str, item_id: int
+    ) -> dict:
+        """推荐反馈（type: 'like'/'dislike'/'unlike'/'undislike'）"""
+        r = requests.post(
+            f"{API_BASE}/recommender/feedback",
+            json={
+                "type": feedback_type,
+                "recommenderUuid": recommender_uuid,
+                "itemId": item_id,
+            },
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json() if r.text else {"ok": True}
+
+    # ===== 标签投票 =====
+
+    def vote_work_tag(
+        self, token: str, work_id: int, tag_id: int, status: int
+    ) -> dict:
+        """给作品标签投票（status: 1=赞同, -1=反对, 0=取消）"""
+        r = requests.post(
+            f"{API_BASE}/vote/vote-work-tag",
+            json={"workID": work_id, "tagID": tag_id, "status": status},
+            headers=self._auth_headers(token),
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 401:
+            raise AsmrError("未登录或 token 已失效")
+        r.raise_for_status()
+        return r.json() if r.text else {"ok": True}
+
+    def get_tracks(self, work_id: int) -> list[dict]:
+        """获取作品文件树（递归结构）"""
+        url = f"{API_BASE}/tracks/{work_id}"
+        r = requests.get(url, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+
+    def get_cover_bytes(self, work_id: int, cover_type: str = "main") -> bytes:
+        """获取封面图字节"""
+        url = f"{API_BASE}/cover/{work_id}.jpg"
+        params = {"type": cover_type}
+        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r.raise_for_status()
+        return r.content
+
+    def stream_download(self, url: str, chunk_size: int = STREAM_CHUNK):
+        """流式下载，yield 字节块"""
+        with requests.get(
+            url, stream=True, proxies=self._proxies(), timeout=DOWNLOAD_TIMEOUT
+        ) as r:
+            r.raise_for_status()
+            for chunk in r.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    yield chunk
+
+    def head(self, url: str) -> dict:
+        """HEAD 请求，返回 headers"""
+        r = requests.head(
+            url,
+            allow_redirects=True,
+            proxies=self._proxies(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+        r.raise_for_status()
+        return dict(r.headers)
+
+
+def flatten_file_tree(tree: list[dict], parent_path: str = "") -> list[dict]:
+    """把 asmr.one 的递归文件树拍平成路径列表
+
+    返回 [{type, title, path, url, size, duration, ...}, ...]
+    其中 type 为 audio / file / folder；folder 不出现在最终列表中（仅作为路径前缀）。
+    url 仅对 audio/file 有值（mediaDownloadUrl）。
+    """
+    out: list[dict] = []
+    for node in tree or []:
+        t = node.get("type")
+        title = node.get("title", "")
+        path = f"{parent_path}/{title}" if parent_path else title
+
+        if t == "folder":
+            out.extend(flatten_file_tree(node.get("children", []), path))
+        elif t in ("audio", "file"):
+            out.append(
+                {
+                    "type": t,
+                    "title": title,
+                    "path": path,
+                    "url": node.get("mediaDownloadUrl"),
+                    "stream_url": node.get("mediaStreamUrl"),
+                    "size": node.get("size", 0),
+                    "duration": node.get("duration"),
+                    "hash": node.get("hash"),
+                }
+            )
+    return out
