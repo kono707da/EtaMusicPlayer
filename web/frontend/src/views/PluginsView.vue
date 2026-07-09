@@ -7,7 +7,12 @@ import {
   disablePlugin,
   deletePlugin,
   restartServer,
-  analyzeChanges
+  analyzeChanges,
+  listOnlinePlugins,
+  getOnlineRegistryStatus,
+  refreshOnlineRegistry,
+  installOnlinePlugin,
+  updateOnlinePlugin
 } from '../api/plugin'
 import axios from 'axios'
 import { Button } from '@/components/ui/button'
@@ -24,7 +29,11 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useConfirm } from '@/composables/use-confirm'
-import { RefreshCw, Trash2, Package, Loader2, Save, XCircle } from 'lucide-vue-next'
+import {
+  RefreshCw, Trash2, Package, Loader2, Save, XCircle,
+  Download, Cloud, CloudOff, ArrowUpCircle, CheckCircle2,
+  XCircle as XCircleIcon, AlertTriangle, Wifi, WifiOff
+} from 'lucide-vue-next'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -32,11 +41,19 @@ const { confirm } = useConfirm()
 const plugins = ref([])
 const loading = ref(false)
 const syncing = ref(false)
-const applying = ref(false) // 正在保存并重启
+const applying = ref(false)
 const toggling = ref(null)
-// 待保存的变更：{ pluginName: desiredEnabled }
-// Switch 切换只写入这里，不立即调后端
 const pendingChanges = ref({})
+
+const onlinePlugins = ref([])
+const onlineLoading = ref(false)
+const onlineAvailable = ref(false)
+const onlineError = ref('')
+const etaWebVersion = ref('')
+const installing = ref(null)
+const updating = ref(null)
+
+const activeTab = ref('installed')
 
 async function load() {
   loading.value = true
@@ -49,7 +66,75 @@ async function load() {
   }
 }
 
-// Switch 的有效显示值：pending 优先，否则原始值
+async function loadOnline() {
+  onlineLoading.value = true
+  try {
+    const status = await getOnlineRegistryStatus()
+    onlineAvailable.value = status.available
+    etaWebVersion.value = status.eta_web_version
+    onlineError.value = status.error || ''
+    if (status.available) {
+      onlinePlugins.value = await listOnlinePlugins()
+    }
+  } catch (e) {
+    onlineAvailable.value = false
+    onlineError.value = e.response?.data?.detail || e.message
+  } finally {
+    onlineLoading.value = false
+  }
+}
+
+async function onRefreshOnline() {
+  onlineLoading.value = true
+  try {
+    await refreshOnlineRegistry()
+    onlinePlugins.value = await listOnlinePlugins()
+    toast.success('在线注册表已刷新')
+  } catch (e) {
+    toast.error('刷新失败', e.response?.data?.detail || e.message)
+  } finally {
+    onlineLoading.value = false
+  }
+}
+
+async function onInstall(plugin) {
+  const ok = await confirm(
+    `确定安装插件「${plugin.display_name || plugin.name}」v${plugin.online_version}？\n\n将从 GitHub 下载插件文件并安装 Python 依赖，安装后需要重启服务才能生效。`,
+    { title: '安装插件', type: 'info' }
+  )
+  if (!ok) return
+  installing.value = plugin.name
+  try {
+    const result = await installOnlinePlugin(plugin.name)
+    toast.success(result.message, result.details || '')
+    await load()
+    await loadOnline()
+  } catch (e) {
+    toast.error('安装失败', e.response?.data?.detail || e.message)
+  } finally {
+    installing.value = null
+  }
+}
+
+async function onUpdate(plugin) {
+  const ok = await confirm(
+    `确定更新插件「${plugin.display_name || plugin.name}」到 v${plugin.online_version}？\n\n将覆盖当前安装的版本，更新后需要重启服务才能生效。`,
+    { title: '更新插件', type: 'info' }
+  )
+  if (!ok) return
+  updating.value = plugin.name
+  try {
+    const result = await updateOnlinePlugin(plugin.name)
+    toast.success(result.message, result.details || '')
+    await load()
+    await loadOnline()
+  } catch (e) {
+    toast.error('更新失败', e.response?.data?.detail || e.message)
+  } finally {
+    updating.value = null
+  }
+}
+
 function effectiveEnabled(plugin) {
   if (pendingChanges.value[plugin.name] !== undefined) {
     return pendingChanges.value[plugin.name]
@@ -57,12 +142,10 @@ function effectiveEnabled(plugin) {
   return plugin.enabled
 }
 
-// 是否有未保存的变更
 const hasPendingChanges = computed(
   () => Object.keys(pendingChanges.value).length > 0
 )
 
-// 变更摘要
 const pendingSummary = computed(() => {
   const entries = Object.entries(pendingChanges.value)
   if (entries.length === 0) return ''
@@ -73,13 +156,10 @@ const pendingSummary = computed(() => {
   return parts.join('，')
 })
 
-// 受影响的插件数量
 const pendingCount = computed(() => Object.keys(pendingChanges.value).length)
 
 function onToggle(plugin, newValue) {
-  // 只记录到 pendingChanges，不调后端
   if (newValue === plugin.enabled) {
-    // 恢复到原始值，删除 pending 记录
     const next = { ...pendingChanges.value }
     delete next[plugin.name]
     pendingChanges.value = next
@@ -111,10 +191,8 @@ async function onApplyChanges() {
 
   applying.value = true
   try {
-    // 1. 先分析变更是否需要重启
     const analysis = await analyzeChanges(pendingChanges.value)
 
-    // 2. 根据分析结果给用户不同的确认提示
     let confirmMsg = ''
     if (analysis.needs_restart) {
       const affectedDesc = analysis.affected
@@ -134,7 +212,6 @@ async function onApplyChanges() {
       return
     }
 
-    // 3. 批量提交 enable/disable 到数据库
     for (const [name, enabled] of changes) {
       if (enabled) {
         await enablePlugin(name)
@@ -143,9 +220,7 @@ async function onApplyChanges() {
       }
     }
 
-    // 4. 根据是否需要重启走不同路径
     if (analysis.needs_restart) {
-      // 触发服务器重启
       try {
         await restartServer()
       } catch (e) {
@@ -156,7 +231,6 @@ async function onApplyChanges() {
       toast.success('服务已恢复，正在刷新页面...')
       setTimeout(() => window.location.reload(), 800)
     } else {
-      // 无需重启，仅刷新页面
       toast.success('变更已保存，正在刷新页面...')
       setTimeout(() => window.location.reload(), 600)
     }
@@ -192,6 +266,7 @@ async function onDelete(plugin) {
     const result = await deletePlugin(plugin.name)
     toast.success(result.message || '已删除')
     await load()
+    await loadOnline()
   } catch (e) {
     toast.error('删除失败', e.response?.data?.detail || e.message)
   }
@@ -210,7 +285,21 @@ function stateBadge(plugin) {
   return { label: '已禁用', variant: 'secondary' }
 }
 
-onMounted(load)
+function compatIcon(compatible) {
+  if (compatible === true) return 'check'
+  if (compatible === false) return 'x'
+  return 'unknown'
+}
+
+function categoryLabel(cat) {
+  const map = { core: '核心', download: '下载', other: '其他', unknown: '未知' }
+  return map[cat] || cat
+}
+
+onMounted(() => {
+  load()
+  loadOnline()
+})
 </script>
 
 <template>
@@ -228,100 +317,257 @@ onMounted(load)
       </div>
     </div>
 
-    <Alert class="border-primary/30 bg-primary/5">
-      <AlertDescription class="text-muted-foreground">
-        插件提供访问端的扩展能力（如本地节点）。切换开关后点击「保存生效」，
-        系统将自动重启访问端服务并刷新页面，变更随即生效。
-      </AlertDescription>
-    </Alert>
-
-    <!-- 待保存变更提示条 -->
-    <Alert
-      v-if="hasPendingChanges"
-      class="border-primary bg-primary/10 shadow-gold-glow"
-    >
-      <AlertDescription class="flex items-center justify-between gap-4">
-        <div class="flex flex-col gap-1">
-          <span class="font-medium text-primary">
-            有 {{ pendingCount }} 项待保存变更
-          </span>
-          <span class="text-sm text-muted-foreground">
-            {{ pendingSummary }} · 保存后自动重启服务并刷新页面
-          </span>
-        </div>
-        <div class="flex items-center gap-2">
-          <Button variant="ghost" size="sm" :disabled="applying" @click="discardChanges">
-            <XCircle class="h-4 w-4" />
-            放弃
-          </Button>
-          <Button variant="gold" size="sm" :disabled="applying" @click="onApplyChanges">
-            <Save v-if="!applying" class="h-4 w-4" />
-            <Loader2 v-else class="h-4 w-4 animate-spin" />
-            保存生效
-          </Button>
-        </div>
-      </AlertDescription>
-    </Alert>
-
-    <Alert v-if="loading && plugins.length === 0" class="border-border">
-      <AlertDescription class="flex items-center gap-2">
-        <Loader2 class="h-4 w-4 animate-spin" />
-        正在加载插件列表...
-      </AlertDescription>
-    </Alert>
-
-    <Alert v-if="!loading && plugins.length === 0" class="border-border">
-      <AlertDescription>
-        尚未发现任何插件。请将插件目录放入 backend/app/plugins/ 下，然后点击『扫描插件』。
-      </AlertDescription>
-    </Alert>
-
-    <div v-if="plugins.length > 0" class="rounded-lg border bg-card shadow-sm">
-      <Table>
-        <TableHeader>
-          <TableRow class="hover:bg-transparent">
-            <TableHead class="w-[80px]">状态</TableHead>
-            <TableHead>插件名</TableHead>
-            <TableHead class="w-[80px]">版本</TableHead>
-            <TableHead>说明</TableHead>
-            <TableHead class="w-[100px]">启用</TableHead>
-            <TableHead class="w-[100px]">操作</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableRow v-for="p in plugins" :key="p.id">
-            <TableCell>
-              <Badge :variant="stateBadge(p).variant">
-                {{ stateBadge(p).label }}
-              </Badge>
-            </TableCell>
-            <TableCell class="font-mono font-medium text-foreground">
-              {{ p.name }}
-            </TableCell>
-            <TableCell class="text-muted-foreground">{{ p.version }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ p.description }}</TableCell>
-            <TableCell>
-              <Switch
-                :model-value="effectiveEnabled(p)"
-                :disabled="toggling === p.name || !p.files_present || applying"
-                @update:model-value="(v) => onToggle(p, v)"
-              />
-            </TableCell>
-            <TableCell>
-              <Button
-                variant="ghost"
-                size="sm"
-                class="text-destructive hover:text-destructive"
-                :disabled="p.loaded"
-                @click="onDelete(p)"
-              >
-                <Trash2 class="h-4 w-4" />
-              </Button>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
+    <!-- Tab 切换 -->
+    <div class="flex border-b border-border">
+      <button
+        class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+        :class="activeTab === 'installed'
+          ? 'border-primary text-primary'
+          : 'border-transparent text-muted-foreground hover:text-foreground'"
+        @click="activeTab = 'installed'"
+      >
+        已安装 ({{ plugins.length }})
+      </button>
+      <button
+        class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+        :class="activeTab === 'online'
+          ? 'border-primary text-primary'
+          : 'border-transparent text-muted-foreground hover:text-foreground'"
+        @click="activeTab = 'online'"
+      >
+        <Cloud v-if="onlineAvailable" class="inline h-4 w-4 mr-1" />
+        <CloudOff v-else class="inline h-4 w-4 mr-1" />
+        在线插件 ({{ onlinePlugins.length }})
+      </button>
     </div>
+
+    <!-- ===== 已安装插件 Tab ===== -->
+    <template v-if="activeTab === 'installed'">
+      <Alert class="border-primary/30 bg-primary/5">
+        <AlertDescription class="text-muted-foreground">
+          插件提供访问端的扩展能力（如本地节点）。切换开关后点击「保存生效」，
+          系统将自动重启访问端服务并刷新页面，变更随即生效。
+        </AlertDescription>
+      </Alert>
+
+      <Alert
+        v-if="hasPendingChanges"
+        class="border-primary bg-primary/10 shadow-gold-glow"
+      >
+        <AlertDescription class="flex items-center justify-between gap-4">
+          <div class="flex flex-col gap-1">
+            <span class="font-medium text-primary">
+              有 {{ pendingCount }} 项待保存变更
+            </span>
+            <span class="text-sm text-muted-foreground">
+              {{ pendingSummary }} · 保存后自动重启服务并刷新页面
+            </span>
+          </div>
+          <div class="flex items-center gap-2">
+            <Button variant="ghost" size="sm" :disabled="applying" @click="discardChanges">
+              <XCircle class="h-4 w-4" />
+              放弃
+            </Button>
+            <Button variant="gold" size="sm" :disabled="applying" @click="onApplyChanges">
+              <Save v-if="!applying" class="h-4 w-4" />
+              <Loader2 v-else class="h-4 w-4 animate-spin" />
+              保存生效
+            </Button>
+          </div>
+        </AlertDescription>
+      </Alert>
+
+      <Alert v-if="loading && plugins.length === 0" class="border-border">
+        <AlertDescription class="flex items-center gap-2">
+          <Loader2 class="h-4 w-4 animate-spin" />
+          正在加载插件列表...
+        </AlertDescription>
+      </Alert>
+
+      <Alert v-if="!loading && plugins.length === 0" class="border-border">
+        <AlertDescription>
+          尚未安装任何插件。切换到「在线插件」标签页浏览并安装可用插件。
+        </AlertDescription>
+      </Alert>
+
+      <div v-if="plugins.length > 0" class="rounded-lg border bg-card shadow-sm">
+        <Table>
+          <TableHeader>
+            <TableRow class="hover:bg-transparent">
+              <TableHead class="w-[80px]">状态</TableHead>
+              <TableHead>插件名</TableHead>
+              <TableHead class="w-[80px]">版本</TableHead>
+              <TableHead>说明</TableHead>
+              <TableHead class="w-[100px]">启用</TableHead>
+              <TableHead class="w-[100px]">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="p in plugins" :key="p.id">
+              <TableCell>
+                <Badge :variant="stateBadge(p).variant">
+                  {{ stateBadge(p).label }}
+                </Badge>
+              </TableCell>
+              <TableCell class="font-mono font-medium text-foreground">
+                {{ p.name }}
+              </TableCell>
+              <TableCell class="text-muted-foreground">{{ p.version }}</TableCell>
+              <TableCell class="text-muted-foreground">{{ p.description }}</TableCell>
+              <TableCell>
+                <Switch
+                  :model-value="effectiveEnabled(p)"
+                  :disabled="toggling === p.name || !p.files_present || applying"
+                  @update:model-value="(v) => onToggle(p, v)"
+                />
+              </TableCell>
+              <TableCell>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="text-destructive hover:text-destructive"
+                  :disabled="p.loaded"
+                  @click="onDelete(p)"
+                >
+                  <Trash2 class="h-4 w-4" />
+                </Button>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+    </template>
+
+    <!-- ===== 在线插件 Tab ===== -->
+    <template v-if="activeTab === 'online'">
+      <!-- 连接状态 -->
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2 text-sm">
+          <Wifi v-if="onlineAvailable" class="h-4 w-4 text-green-500" />
+          <WifiOff v-else class="h-4 w-4 text-red-500" />
+          <span v-if="onlineAvailable" class="text-muted-foreground">
+            在线注册表已连接 · 骨架版本 v{{ etaWebVersion }}
+          </span>
+          <span v-else class="text-red-500">
+            无法连接在线注册表{{ onlineError ? '：' + onlineError : '' }}
+          </span>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          :disabled="onlineLoading"
+          @click="onRefreshOnline"
+        >
+          <RefreshCw v-if="onlineLoading" class="h-4 w-4 animate-spin" />
+          <Cloud v-else class="h-4 w-4" />
+          刷新
+        </Button>
+      </div>
+
+      <Alert v-if="onlineLoading && onlinePlugins.length === 0" class="border-border">
+        <AlertDescription class="flex items-center gap-2">
+          <Loader2 class="h-4 w-4 animate-spin" />
+          正在从 GitHub 获取在线插件列表...
+        </AlertDescription>
+      </Alert>
+
+      <Alert v-if="!onlineLoading && !onlineAvailable" class="border-destructive/50 bg-destructive/5">
+        <AlertDescription class="flex items-center gap-2">
+          <CloudOff class="h-4 w-4" />
+          无法连接在线注册表。请检查网络连接后重试。
+        </AlertDescription>
+      </Alert>
+
+      <div v-if="onlinePlugins.length > 0" class="rounded-lg border bg-card shadow-sm">
+        <Table>
+          <TableHeader>
+            <TableRow class="hover:bg-transparent">
+              <TableHead class="w-[60px]">图标</TableHead>
+              <TableHead>插件名</TableHead>
+              <TableHead class="w-[70px]">分类</TableHead>
+              <TableHead class="w-[90px]">在线版本</TableHead>
+              <TableHead class="w-[90px]">本地版本</TableHead>
+              <TableHead class="w-[90px]">兼容性</TableHead>
+              <TableHead>说明</TableHead>
+              <TableHead class="w-[120px]">操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <TableRow v-for="p in onlinePlugins" :key="p.name">
+              <TableCell>
+                <Package class="h-5 w-5 text-muted-foreground" />
+              </TableCell>
+              <TableCell>
+                <div class="font-medium text-foreground">{{ p.display_name || p.name }}</div>
+                <div class="text-xs text-muted-foreground font-mono">{{ p.name }}</div>
+              </TableCell>
+              <TableCell>
+                <Badge variant="secondary">{{ categoryLabel(p.category) }}</Badge>
+              </TableCell>
+              <TableCell class="font-mono text-sm">
+                v{{ p.online_version || '-' }}
+              </TableCell>
+              <TableCell class="font-mono text-sm">
+                <span v-if="p.installed">v{{ p.local_version }}</span>
+                <span v-else class="text-muted-foreground">-</span>
+              </TableCell>
+              <TableCell>
+                <div v-if="p.compatible === true" class="flex items-center gap-1 text-green-600">
+                  <CheckCircle2 class="h-4 w-4" />
+                  <span class="text-xs">兼容</span>
+                </div>
+                <div v-else-if="p.compatible === false" class="flex items-center gap-1 text-red-500">
+                  <XCircleIcon class="h-4 w-4" />
+                  <span class="text-xs" :title="p.compatibility_reason">不兼容</span>
+                </div>
+                <div v-else class="flex items-center gap-1 text-yellow-500">
+                  <AlertTriangle class="h-4 w-4" />
+                  <span class="text-xs" :title="p.compatibility_reason">未知</span>
+                </div>
+              </TableCell>
+              <TableCell class="text-sm text-muted-foreground">
+                {{ p.description }}
+              </TableCell>
+              <TableCell>
+                <div class="flex items-center gap-1">
+                  <Button
+                    v-if="!p.installed && p.can_install"
+                    variant="default"
+                    size="sm"
+                    :disabled="installing === p.name"
+                    @click="onInstall(p)"
+                  >
+                    <Loader2 v-if="installing === p.name" class="h-4 w-4 animate-spin" />
+                    <Download v-else class="h-4 w-4" />
+                    安装
+                  </Button>
+                  <Button
+                    v-else-if="p.can_update"
+                    variant="default"
+                    size="sm"
+                    :disabled="updating === p.name"
+                    @click="onUpdate(p)"
+                  >
+                    <Loader2 v-if="updating === p.name" class="h-4 w-4 animate-spin" />
+                    <ArrowUpCircle v-else class="h-4 w-4" />
+                    更新
+                  </Button>
+                  <Badge v-else-if="p.installed && !p.can_update" variant="success">
+                    已是最新
+                  </Badge>
+                  <Badge v-else-if="!p.compatible" variant="destructive">
+                    不兼容
+                  </Badge>
+                  <Badge v-else-if="!p.online_available" variant="secondary">
+                    仅本地
+                  </Badge>
+                </div>
+              </TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+    </template>
 
     <!-- 重启/刷新遮罩 -->
     <div

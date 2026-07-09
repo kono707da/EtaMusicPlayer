@@ -42,6 +42,7 @@ PLUGIN_META = {
     "description": "本地节点：完整的音乐库服务（扫描/流式/播放列表/用户/权限/元数据/去重/音质）",
     "version": "1.0.0",
     "author": "EtaMusic",
+    "eta_web_version": ">=1.0.0,<2.0.0",
 }
 
 

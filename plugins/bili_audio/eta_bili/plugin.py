@@ -17,6 +17,7 @@ PLUGIN_META = {
     "description": "浏览 B站音频区并下载到本地节点",
     "version": "1.0.0",
     "author": "EtaMusic",
+    "eta_web_version": ">=1.0.0,<2.0.0",
 }
 
 

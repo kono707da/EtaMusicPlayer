@@ -17,6 +17,7 @@ PLUGIN_META = {
     "description": "浏览 asmr.one 作品并下载到本地节点（带代理支持）",
     "version": "1.0.0",
     "author": "EtaMusic",
+    "eta_web_version": ">=1.0.0,<2.0.0",
 }
 
 
