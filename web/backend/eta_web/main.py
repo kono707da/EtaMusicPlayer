@@ -1,4 +1,4 @@
-"""EtaMusic Web 骨架应用
+"""EtaMusic Web 访问端
 
 不包含节点功能（扫描/流式/播放列表等），仅提供：
 - 插件加载器（从外部目录发现并加载插件）
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="EtaMusic Web",
-    description="多节点联邦音乐系统 - Web 骨架（节点功能通过插件加载）",
+    description="多节点联邦音乐系统 - 访问端（节点功能通过插件加载）",
     version="2.0.0",
     lifespan=lifespan,
 )

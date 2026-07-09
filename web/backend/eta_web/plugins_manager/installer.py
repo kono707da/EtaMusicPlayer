@@ -169,7 +169,7 @@ def install_plugin(plugin_name: str) -> dict:
     if not compatible:
         return {
             "success": False,
-            "message": f"插件 {plugin_name} 与当前骨架版本不兼容",
+            "message": f"插件 {plugin_name} 与当前访问端版本不兼容",
             "details": reason,
         }
 
@@ -239,7 +239,7 @@ def update_plugin(plugin_name: str) -> dict:
     if not compatible:
         return {
             "success": False,
-            "message": f"插件 {plugin_name} v{online.version} 与当前骨架版本不兼容",
+            "message": f"插件 {plugin_name} v{online.version} 与当前访问端版本不兼容",
             "details": reason,
         }
 

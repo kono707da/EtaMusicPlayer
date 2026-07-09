@@ -1,6 +1,6 @@
 """EtaMusic Node 独立运行入口
 
-当节点不作为 Web 骨架的插件加载时，可独立运行。
+当节点不作为访问端的插件加载时，可独立运行。
 独立运行时，节点服务挂载在根路径 / 而非 /local_node。
 """
 from __future__ import annotations

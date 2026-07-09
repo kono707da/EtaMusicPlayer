@@ -33,3 +33,25 @@ class Plugin(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False
     )
+
+
+class RemoteNode(Base):
+    """远程节点配置
+
+    下载插件可通过此配置连接远程 eta_node 实例，
+    将下载的文件推送到远程节点的 watch_dir。
+    """
+
+    __tablename__ = "remote_nodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    url: Mapped[str] = mapped_column(String(512), nullable=False)
+    username: Mapped[str] = mapped_column(String(128), default="admin", nullable=False)
+    password: Mapped[str] = mapped_column(String(256), default="", nullable=False)
+    verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False
+    )

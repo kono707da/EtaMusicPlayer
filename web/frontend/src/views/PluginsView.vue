@@ -446,7 +446,7 @@ onMounted(() => {
           <Wifi v-if="onlineAvailable" class="h-4 w-4 text-green-500" />
           <WifiOff v-else class="h-4 w-4 text-red-500" />
           <span v-if="onlineAvailable" class="text-muted-foreground">
-            在线注册表已连接 · 骨架版本 v{{ etaWebVersion }}
+            在线注册表已连接 · 访问端版本 v{{ etaWebVersion }}
           </span>
           <span v-else class="text-red-500">
             无法连接在线注册表{{ onlineError ? '：' + onlineError : '' }}

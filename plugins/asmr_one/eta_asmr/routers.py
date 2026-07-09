@@ -27,6 +27,7 @@ DEFAULT_SETTINGS = {
     "verify_ssl": "true",
     "subdir": "ASMR",
     "default_watch_dir_id": "",
+    "cache_pool_size_mb": "500",
 }
 
 
@@ -111,6 +112,7 @@ class SettingsUpdate(BaseModel):
     verify_ssl: Optional[str] = None
     subdir: Optional[str] = None
     default_watch_dir_id: Optional[str] = None
+    cache_pool_size_mb: Optional[str] = None
 
 
 @router.get("/settings")
@@ -708,8 +710,8 @@ def _list_local_watch_dirs() -> list[dict]:
 def list_target_nodes(db: Session = Depends(get_db)) -> dict:
     """列出可下载目标节点
 
-    当前仅支持 local_node（需已加载）。
-    预留远程节点接口：若远程节点暴露 /api/upload 之类的接口，可在此扩展。
+    返回本地节点（需 local_node 已加载）和已配置的远程节点。
+    每个节点包含其 watch_dirs 列表，供前端选择下载目标。
     """
     try:
         from eta_web.plugins_manager.routers import _loaded_in_process
@@ -730,7 +732,57 @@ def list_target_nodes(db: Session = Depends(get_db)) -> dict:
                 "reason": "",
             }
         )
-    return {"nodes": nodes, "supported_types": ["local_node"]}
+
+    # 远程节点
+    try:
+        from eta_web.plugins_manager.routers import _get_remote_nodes_config
+        from eta_web.plugins_manager.database import SessionLocal as WebSession
+    except ImportError:
+        _get_remote_nodes_config = None
+
+    if _get_remote_nodes_config is not None:
+        web_db = WebSession()
+        try:
+            remote_nodes = _get_remote_nodes_config(web_db)
+        finally:
+            web_db.close()
+
+        for rn in remote_nodes:
+            try:
+                from eta_shared.node_client import RemoteNodeClient
+
+                client = RemoteNodeClient(
+                    base_url=rn["url"],
+                    username=rn.get("username", "admin"),
+                    password=rn.get("password", ""),
+                    verify_ssl=rn.get("verify_ssl", True),
+                )
+                watch_dirs = client.get_watch_dirs()
+                nodes.append(
+                    {
+                        "type": "remote",
+                        "id": f"remote:{rn['name']}",
+                        "name": rn["name"],
+                        "base_url": rn["url"],
+                        "writable": True,
+                        "watch_dirs": watch_dirs,
+                        "reason": "",
+                    }
+                )
+            except Exception as e:
+                nodes.append(
+                    {
+                        "type": "remote",
+                        "id": f"remote:{rn['name']}",
+                        "name": rn["name"],
+                        "base_url": rn["url"],
+                        "writable": False,
+                        "watch_dirs": [],
+                        "reason": f"连接失败: {e}",
+                    }
+                )
+
+    return {"nodes": nodes, "supported_types": ["local_node", "remote"]}
 
 
 # ===== 下载任务 =====
@@ -743,6 +795,7 @@ class DownloadCreate(BaseModel):
     watch_dir_id: int
     subdir: Optional[str] = None
     selected_paths: Optional[list[str]] = None
+    files: list[dict] = Field(default_factory=list)
     metadata: Optional[dict] = None
 
 
@@ -757,7 +810,7 @@ def create_download(
         work_id=payload.work_id,
         work_title=payload.work_title,
         source_id=payload.source_id,
-        target_base_url="/local_node",
+        target_base_url=payload.target_node_id,
         target_watch_dir_id=payload.watch_dir_id,
         target_subdir=subdir,
         status="pending",

@@ -1,17 +1,24 @@
-"""下载器：后台线程流式下载到 local_node watch_dir
+"""下载器：后台线程流式下载到节点 watch_dir
 
-工作流程：
-1. 创建 DownloadTask 记录（pending）
-2. 启动后台线程：依次下载每个文件到 {watch_dir_path}/{subdir}/{work_title}/{file_path}
-3. 已存在且同大小的文件跳过
-4. 全部完成后调用 local_node 的 /api/scan 触发扫描入库
-5. 失败/部分失败：标记 partial 或 failed，错误信息写入 error_message
+支持两种节点类型：
+- 本地节点（local_node）：同进程直调，文件直接写入 watch_dir
+- 远程节点（remote:name）：通过 HTTP API 推送，先下载到缓存池再上传
+
+远程节点工作流程：
+1. 下载文件到本地缓存池 data/cache_pool/{task_id}/
+2. 应用元数据/封面/歌词到缓存文件
+3. 通过 HTTP 上传到远程节点的 watch_dir
+4. 清理缓存池
+5. 触发远程节点扫描入库
+
+缓存池大小可在设置页配置，超过限制时暂停下载等待上传完成。
 """
 from __future__ import annotations
 
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -38,187 +45,54 @@ except ImportError:
     write_lyrics_to_file = None
     write_tags_and_cover = None
 
+try:
+    from eta_shared.node_client import (
+        LocalNodeClient,
+        RemoteNodeClient,
+        NodeClient,
+        _build_target_path,
+        _sanitize,
+        create_node_client,
+    )
+except ImportError:
+    create_node_client = None
+    NodeClient = None
+    LocalNodeClient = None
+    RemoteNodeClient = None
+    _build_target_path = None
+    _sanitize = None
+
 logger = logging.getLogger("etamusic.plugins.asmr_one")
 
 _lock = threading.Lock()
 _running_tasks: dict[int, threading.Thread] = {}
 
-_INVALID_CHARS = re.compile(r'[\\/:*?"<>|]')
+_CACHE_POOL_BASE = Path(__file__).resolve().parent.parent.parent / "data" / "cache_pool"
 
 
-def _sanitize(name: str) -> str:
-    return _INVALID_CHARS.sub("_", name).strip().rstrip(".")
+def _get_cache_dir(task_id: int) -> Path:
+    d = _CACHE_POOL_BASE / str(task_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
-def _build_target_path(
-    watch_dir_path: str,
-    subdir: Optional[str],
-    work_title: str,
-    file_rel_path: str,
-) -> Path:
-    parts = [watch_dir_path]
-    if subdir:
-        parts.append(subdir.strip("/\\"))
-    parts.append(_sanitize(work_title))
-    for seg in file_rel_path.split("/"):
-        if seg:
-            parts.append(_sanitize(seg))
-    return Path(*parts)
+def _clean_cache_dir(task_id: int) -> None:
+    d = _CACHE_POOL_BASE / str(task_id)
+    if d.exists():
+        shutil.rmtree(d, ignore_errors=True)
 
 
-def _get_watch_dir_path(watch_dir_id: int) -> Optional[str]:
-    try:
-        from eta_node.database import SessionLocal as LocalSession
-        from eta_node.models import WatchDir
-    except ImportError:
-        return None
-
-    db_local = LocalSession()
-    try:
-        wd = db_local.get(WatchDir, watch_dir_id)
-        return wd.path if wd else None
-    finally:
-        db_local.close()
-
-
-def _trigger_local_node_scan() -> bool:
-    try:
-        from eta_node.database import SessionLocal as LocalSession
-        from eta_node.models import ScanTask
-        from eta_node.scanner import run_scan
-    except ImportError as e:
-        logger.warning("无法导入 local_node 扫描模块: %s", e)
-        return False
-
-    db_local = LocalSession()
-    try:
-        task = ScanTask(status="pending", started_at=datetime.utcnow())
-        db_local.add(task)
-        db_local.commit()
-        db_local.refresh(task)
-        task_id = task.id
-        db_local.close()
-
-        run_scan(task_id, watch_dir_id=None)
-        return True
-    except Exception as e:
-        logger.warning("触发 local_node 扫描失败: %s", e)
-        return False
-    finally:
-        try:
-            db_local.close()
-        except Exception:
-            pass
-
-
-def _create_album_playlist(db: Session, task: DownloadTask) -> Optional[int]:
-    try:
-        from eta_node.database import SessionLocal as LocalSession
-        from eta_node.models import Playlist, PlaylistItem, Track, User
-    except ImportError as e:
-        logger.warning("无法导入 local_node 模块: %s", e)
-        return None
-
-    db_local = LocalSession()
-    try:
-        file_statuses = (
-            db.query(DownloadFileStatus)
-            .filter(
-                DownloadFileStatus.task_id == task.id,
-                DownloadFileStatus.status.in_(["completed", "skipped"]),
-                DownloadFileStatus.saved_to.isnot(None),
-            )
-            .all()
-        )
-        audio_files = [
-            fs for fs in file_statuses
-            if fs.saved_to and Path(fs.saved_to).suffix.lower() in AUDIO_EXTS
-        ]
-        if not audio_files:
-            logger.info("任务 %s: 无音频文件，跳过创建播放列表", task.id)
-            return None
-
-        saved_paths = [fs.saved_to for fs in audio_files]
-        tracks = (
-            db_local.query(Track)
-            .filter(Track.abs_path.in_(saved_paths))
-            .all()
-        )
-        if not tracks:
-            logger.warning(
-                "任务 %s: 未在 local_node 找到对应 Track（可能扫描未完成），跳过播放列表创建",
-                task.id,
-            )
-            return None
-
-        admin = db_local.query(User).filter(User.is_admin.is_(True)).first()
-        if admin is None:
-            logger.warning("任务 %s: local_node 无 admin 用户，跳过播放列表创建", task.id)
-            return None
-
-        playlist_name = task.work_title or f"ASMR {task.work_id}"
-        pl = (
-            db_local.query(Playlist)
-            .filter(
-                Playlist.owner_id == admin.id,
-                Playlist.name == playlist_name,
-            )
-            .one_or_none()
-        )
-        if pl is None:
-            pl = Playlist(
-                name=playlist_name,
-                owner_id=admin.id,
-                is_system=False,
-                description=f"asmr.one work_id={task.work_id}",
-            )
-            db_local.add(pl)
-            db_local.commit()
-            db_local.refresh(pl)
-            logger.info("任务 %s: 已创建播放列表 '%s' (id=%s)", task.id, playlist_name, pl.id)
-        else:
-            logger.info("任务 %s: 播放列表 '%s' 已存在 (id=%s)，追加曲目", task.id, playlist_name, pl.id)
-
-        max_pos = (
-            db_local.query(PlaylistItem.position)
-            .filter(PlaylistItem.playlist_id == pl.id)
-            .order_by(PlaylistItem.position.desc())
-            .first()
-        )
-        next_pos = (max_pos[0] + 1) if max_pos else 0
-
-        added = 0
-        for t in tracks:
-            exists = (
-                db_local.query(PlaylistItem)
-                .filter(
-                    PlaylistItem.playlist_id == pl.id,
-                    PlaylistItem.track_id == t.id,
-                )
-                .one_or_none()
-            )
-            if exists:
-                continue
-            db_local.add(
-                PlaylistItem(
-                    playlist_id=pl.id,
-                    track_id=t.id,
-                    position=next_pos,
-                )
-            )
-            next_pos += 1
-            added += 1
-        db_local.commit()
-        logger.info(
-            "任务 %s: 播放列表 '%s' 新增 %d/%d 首曲目",
-            task.id, playlist_name, added, len(tracks),
-        )
-        return pl.id
-    except Exception as e:
-        logger.warning("任务 %s: 创建播放列表失败: %s", task.id, e)
-        return None
-    finally:
-        db_local.close()
+def _cache_pool_size_mb() -> float:
+    if not _CACHE_POOL_BASE.exists():
+        return 0.0
+    total = 0
+    for f in _CACHE_POOL_BASE.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total / (1024 * 1024)
 
 
 def _download_one(
@@ -259,17 +133,7 @@ def _apply_metadata_and_cover(
     client: AsmrClient,
     cover_mode: str = "embed",
 ) -> None:
-    """下载完成后：把专辑/艺术家等元数据与封面回写到音频文件标签。
-
-    metadata_json 结构：
-      {album, artist, album_artist, source_url, cover_type}
-    cover_type 取值：main / sam / 240x240，None 表示不写封面
-
-    cover_mode 取值：
-      - "embed": 仅嵌入到音频文件标签
-      - "save":  仅保存为 cover.jpg 到下载目录
-      - "both":  嵌入 + 保存 cover.jpg
-    """
+    """下载完成后：把专辑/艺术家等元数据与封面回写到音频文件标签。"""
     if write_tags_and_cover is None:
         logger.warning("eta_shared 未安装，跳过元数据/封面回写")
         return
@@ -427,6 +291,31 @@ def _apply_lyrics_from_vtt(
                 logger.warning("任务 %s: 写入歌词失败 %s: %s", task.id, fs.saved_to, e)
 
 
+def _get_remote_nodes_config() -> list[dict]:
+    """从访问端数据库获取远程节点配置"""
+    try:
+        from eta_web.plugins_manager.database import SessionLocal as WebSession
+        from eta_web.plugins_manager.routers import _get_remote_nodes_config as _get
+    except ImportError:
+        return []
+    db = WebSession()
+    try:
+        return _get(db)
+    finally:
+        db.close()
+
+
+def _create_node_client_for_task(task: DownloadTask, verify_ssl: bool = True):
+    """根据任务的目标节点创建 NodeClient"""
+    if create_node_client is None:
+        logger.error("eta_shared.node_client 未安装")
+        return None
+
+    node_id = task.target_base_url
+    remote_config = _get_remote_nodes_config() if node_id.startswith("remote:") else None
+    return create_node_client(node_id, remote_config, verify_ssl=verify_ssl)
+
+
 def _worker(task_id: int) -> None:
     db = SessionLocal()
     try:
@@ -446,20 +335,36 @@ def _worker(task_id: int) -> None:
         task.total_files = len(files)
         db.commit()
 
-        watch_dir_path = _get_watch_dir_path(task.target_watch_dir_id)
-        if not watch_dir_path:
-            task.status = "failed"
-            task.error_message = f"watch_dir {task.target_watch_dir_id} 不存在"
-            task.finished_at = datetime.utcnow()
-            db.commit()
-            return
-
         from eta_asmr.routers import _get_settings_dict
 
         settings = _get_settings_dict(db)
         proxy = settings.get("proxy_url") or None
         verify_ssl = settings.get("verify_ssl", "true").lower() not in ("false", "0", "no")
+        cache_pool_limit_mb = float(settings.get("cache_pool_size_mb", "500"))
         client = AsmrClient(proxy_url=proxy, verify_ssl=verify_ssl)
+
+        # 创建节点客户端
+        node_client = _create_node_client_for_task(task, verify_ssl=verify_ssl)
+        if node_client is None:
+            task.status = "failed"
+            task.error_message = f"无法创建节点客户端: {task.target_base_url}"
+            task.finished_at = datetime.utcnow()
+            db.commit()
+            return
+
+        is_remote = not node_client.is_local
+        cache_dir = _get_cache_dir(task_id) if is_remote else None
+
+        # 获取 watch_dir 路径（本地节点需要，远程节点不需要）
+        watch_dir_path = None
+        if node_client.is_local:
+            watch_dir_path = node_client.get_watch_dir_path(task.target_watch_dir_id)
+            if not watch_dir_path:
+                task.status = "failed"
+                task.error_message = f"watch_dir {task.target_watch_dir_id} 不存在"
+                task.finished_at = datetime.utcnow()
+                db.commit()
+                return
 
         completed = 0
         skipped = 0
@@ -484,6 +389,7 @@ def _worker(task_id: int) -> None:
         for idx, f in enumerate(files):
             db.refresh(task)
             if task.status == "canceled":
+                _clean_cache_dir(task_id)
                 return
 
             file_path = f.get("path", "")
@@ -514,19 +420,44 @@ def _worker(task_id: int) -> None:
                 errors.append(f"{file_path}: 无下载链接")
                 continue
 
-            target = _build_target_path(
-                watch_dir_path=watch_dir_path,
-                subdir=task.target_subdir,
-                work_title=task.work_title,
-                file_rel_path=file_path,
-            )
+            # 检查缓存池大小（远程节点）
+            if is_remote and cache_dir and idx > 0:
+                current_size = _cache_pool_size_mb()
+                if current_size > cache_pool_limit_mb:
+                    logger.info(
+                        "任务 %s: 缓存池 %.1fMB 超过限制 %.0fMB，暂停下载等待上传",
+                        task_id, current_size, cache_pool_limit_mb,
+                    )
+                    # 上传已完成的缓存文件以释放空间
+                    _upload_cached_files(db, task, node_client, cache_dir)
+                    # 清理已上传的缓存文件
+                    _clean_uploaded_cache(db, task_id, cache_dir)
 
-            if target.exists() and task.current_file_size > 0 and target.stat().st_size == task.current_file_size:
+            # 构建目标路径
+            if is_remote and cache_dir:
+                # 远程节点：下载到缓存池
+                download_target = _build_target_path(
+                    watch_dir_path=str(cache_dir),
+                    subdir="",
+                    work_title=task.work_title,
+                    file_rel_path=file_path,
+                )
+            else:
+                # 本地节点：直接下载到 watch_dir
+                download_target = _build_target_path(
+                    watch_dir_path=watch_dir_path,
+                    subdir=task.target_subdir,
+                    work_title=task.work_title,
+                    file_rel_path=file_path,
+                )
+
+            # 秒传判断
+            if download_target.exists() and task.current_file_size > 0 and download_target.stat().st_size == task.current_file_size:
                 skipped += 1
                 if file_status:
                     file_status.status = "skipped"
                     file_status.done = task.current_file_size
-                    file_status.saved_to = str(target)
+                    file_status.saved_to = str(download_target)
                 continue
 
             try:
@@ -535,12 +466,12 @@ def _worker(task_id: int) -> None:
                     if file_status:
                         file_status.done = done
 
-                downloaded = _download_one(client, url, target, on_progress=on_progress)
+                downloaded = _download_one(client, url, download_target, on_progress=on_progress)
                 completed += 1
                 if file_status:
                     file_status.status = "completed"
                     file_status.done = downloaded
-                    file_status.saved_to = str(target)
+                    file_status.saved_to = str(download_target)
             except Exception as e:
                 failed += 1
                 if file_status:
@@ -555,6 +486,7 @@ def _worker(task_id: int) -> None:
             task.updated_at = datetime.utcnow()
             db.commit()
 
+        # 汇总状态
         if failed == 0:
             task.status = "completed"
         elif completed == 0 and skipped == 0:
@@ -567,14 +499,42 @@ def _worker(task_id: int) -> None:
         db.commit()
 
         if completed > 0 or skipped > 0:
+            # 应用元数据/封面/歌词（对本地文件或缓存文件）
             _apply_metadata_and_cover(db, task, client)
             _apply_lyrics_from_vtt(db, task, client)
-            _create_album_playlist(db, task)
 
-        if completed > 0 or skipped > 0:
-            _trigger_local_node_scan()
+            if is_remote and cache_dir:
+                # 远程节点：上传所有文件到远程节点
+                _upload_all_to_remote(db, task, node_client, cache_dir)
+                _clean_cache_dir(task_id)
+
+            # 触发扫描
+            node_client.trigger_scan()
+
+            # 本地节点：添加到收集箱
+            if node_client.is_local:
+                try:
+                    file_statuses = (
+                        db.query(DownloadFileStatus)
+                        .filter(
+                            DownloadFileStatus.task_id == task.id,
+                            DownloadFileStatus.status.in_(["completed", "skipped"]),
+                            DownloadFileStatus.saved_to.isnot(None),
+                        )
+                        .all()
+                    )
+                    saved_paths = [fs.saved_to for fs in file_statuses if fs.saved_to]
+                    if saved_paths:
+                        track_ids = node_client.find_tracks_by_paths(saved_paths)
+                        if track_ids:
+                            added = node_client.add_tracks_to_inbox(track_ids)
+                            if added > 0:
+                                logger.info("已将 %d 首曲目添加到收集箱", added)
+                except Exception as e:
+                    logger.warning("添加到收集箱失败: %s", e)
+
+            # 创建播放列表
             try:
-                from eta_node.inbox import add_tracks_to_inbox, find_tracks_by_paths
                 file_statuses = (
                     db.query(DownloadFileStatus)
                     .filter(
@@ -584,23 +544,23 @@ def _worker(task_id: int) -> None:
                     )
                     .all()
                 )
-                saved_paths = []
-                for fs in file_statuses:
-                    if fs.saved_to:
-                        saved_paths.append(fs.saved_to)
-                if saved_paths:
-                    track_ids = find_tracks_by_paths(saved_paths)
-                    if track_ids:
-                        added = add_tracks_to_inbox(track_ids)
-                        if added > 0:
-                            logger.info("已将 %d 首曲目添加到收集箱", added)
-            except ImportError as e:
-                logger.warning("eta_node 未安装，跳过收集箱添加: %s", e)
+                audio_paths = [
+                    fs.saved_to for fs in file_statuses
+                    if fs.saved_to and Path(fs.saved_to).suffix.lower() in AUDIO_EXTS
+                ]
+                if audio_paths:
+                    playlist_name = task.work_title or f"ASMR {task.work_id}"
+                    node_client.create_playlist(
+                        name=playlist_name,
+                        track_paths=audio_paths,
+                        description=f"asmr.one work_id={task.work_id}",
+                    )
             except Exception as e:
-                logger.warning("添加到收集箱失败: %s", e)
+                logger.warning("任务 %s: 创建播放列表失败: %s", task.id, e)
 
     except Exception as e:
         logger.error("下载任务 %s 异常: %s", task_id, e, exc_info=True)
+        _clean_cache_dir(task_id)
         try:
             task = db.get(DownloadTask, task_id)
             if task:
@@ -614,6 +574,139 @@ def _worker(task_id: int) -> None:
         db.close()
         with _lock:
             _running_tasks.pop(task_id, None)
+
+
+def _upload_cached_files(
+    db: Session,
+    task: DownloadTask,
+    node_client,
+    cache_dir: Path,
+) -> None:
+    """上传缓存目录中已完成的文件到远程节点"""
+    file_statuses = (
+        db.query(DownloadFileStatus)
+        .filter(
+            DownloadFileStatus.task_id == task.id,
+            DownloadFileStatus.status == "completed",
+            DownloadFileStatus.saved_to.isnot(None),
+        )
+        .all()
+    )
+    for fs in file_statuses:
+        if not fs.saved_to:
+            continue
+        local_path = Path(fs.saved_to)
+        if not local_path.exists():
+            continue
+        # 只上传缓存目录中的文件
+        try:
+            if cache_dir not in local_path.parents and local_path != cache_dir:
+                continue
+        except TypeError:
+            continue
+        try:
+            file_rel = str(local_path.relative_to(cache_dir / _sanitize(task.work_title)))
+            saved_to = node_client.save_file(
+                watch_dir_id=task.target_watch_dir_id,
+                subdir=task.target_subdir or "",
+                work_title=task.work_title,
+                file_rel_path=file_rel,
+                source_path=local_path,
+            )
+            # 更新 saved_to 为远程节点上的路径
+            fs.saved_to = saved_to
+            db.commit()
+            local_path.unlink(missing_ok=True)
+            logger.info("任务 %s: 已上传 %s 到远程节点", task.id, file_rel)
+        except Exception as e:
+            logger.warning("任务 %s: 上传文件失败 %s: %s", task.id, local_path, e)
+
+
+def _clean_uploaded_cache(
+    db: Session,
+    task_id: int,
+    cache_dir: Path,
+) -> None:
+    """清理已上传的缓存文件（saved_to 已不在缓存目录中的）"""
+    file_statuses = (
+        db.query(DownloadFileStatus)
+        .filter(
+            DownloadFileStatus.task_id == task_id,
+            DownloadFileStatus.status == "completed",
+            DownloadFileStatus.saved_to.isnot(None),
+        )
+        .all()
+    )
+    for fs in file_statuses:
+        if not fs.saved_to:
+            continue
+        local_path = Path(fs.saved_to)
+        # 如果 saved_to 不在缓存目录中，说明已上传
+        try:
+            if cache_dir not in local_path.parents and local_path != cache_dir:
+                continue
+        except TypeError:
+            continue
+
+
+def _upload_all_to_remote(
+    db: Session,
+    task: DownloadTask,
+    node_client,
+    cache_dir: Path,
+) -> None:
+    """上传所有缓存文件到远程节点"""
+    file_statuses = (
+        db.query(DownloadFileStatus)
+        .filter(
+            DownloadFileStatus.task_id == task.id,
+            DownloadFileStatus.status.in_(["completed", "skipped"]),
+            DownloadFileStatus.saved_to.isnot(None),
+        )
+        .all()
+    )
+
+    work_dir_name = _sanitize(task.work_title)
+    for fs in file_statuses:
+        if not fs.saved_to:
+            continue
+        local_path = Path(fs.saved_to)
+
+        # 如果 saved_to 已经不在缓存目录中，说明已经上传过（缓存池满时提前上传）
+        try:
+            is_in_cache = cache_dir in local_path.parents or local_path == cache_dir
+        except TypeError:
+            is_in_cache = False
+
+        if not is_in_cache:
+            # 已上传，跳过
+            continue
+
+        if not local_path.exists():
+            logger.warning("任务 %s: 缓存文件不存在 %s", task.id, local_path)
+            continue
+
+        try:
+            # 计算相对路径（去掉 work_title 前缀）
+            rel = local_path.relative_to(cache_dir)
+            parts = list(rel.parts)
+            if parts and parts[0] == work_dir_name:
+                parts = parts[1:]
+            file_rel = "/".join(parts)
+
+            saved_to = node_client.save_file(
+                watch_dir_id=task.target_watch_dir_id,
+                subdir=task.target_subdir or "",
+                work_title=task.work_title,
+                file_rel_path=file_rel,
+                source_path=local_path,
+            )
+            fs.saved_to = saved_to
+            db.commit()
+            local_path.unlink(missing_ok=True)
+            logger.info("任务 %s: 已上传 %s 到远程节点", task.id, file_rel)
+        except Exception as e:
+            logger.warning("任务 %s: 上传文件失败 %s: %s", task.id, local_path, e)
 
 
 def start_download_task(task_id: int) -> None:

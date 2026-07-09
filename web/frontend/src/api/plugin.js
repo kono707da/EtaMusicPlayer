@@ -2,7 +2,7 @@ import axios from 'axios'
 
 /**
  * 插件管理 API
- * 直接调用访问端骨架的 /api/plugins，不依赖任何插件
+ * 直接调用访问端的 /api/plugins，不依赖任何插件
  */
 
 const client = axios.create({
@@ -88,5 +88,37 @@ export async function installOnlinePlugin(name) {
 // 从在线注册表更新插件
 export async function updateOnlinePlugin(name) {
   const resp = await client.post(`/api/plugins/online/${name}/update`, null, { timeout: 120000 })
+  return resp.data
+}
+
+// ===== 远程节点管理 =====
+
+// 列出所有远程节点配置
+export async function listRemoteNodes() {
+  const resp = await client.get('/api/plugins/remote-nodes')
+  return resp.data
+}
+
+// 新增远程节点
+export async function createRemoteNode(data) {
+  const resp = await client.post('/api/plugins/remote-nodes', data)
+  return resp.data
+}
+
+// 更新远程节点
+export async function updateRemoteNode(id, data) {
+  const resp = await client.put(`/api/plugins/remote-nodes/${id}`, data)
+  return resp.data
+}
+
+// 删除远程节点
+export async function deleteRemoteNode(id) {
+  const resp = await client.delete(`/api/plugins/remote-nodes/${id}`)
+  return resp.data
+}
+
+// 测试远程节点连接
+export async function testRemoteNode(id) {
+  const resp = await client.post(`/api/plugins/remote-nodes/${id}/test`, null, { timeout: 30000 })
   return resp.data
 }

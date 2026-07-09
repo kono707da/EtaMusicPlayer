@@ -1,6 +1,6 @@
 """插件管理 API 路由
 
-挂在访问端骨架的 /api/plugins 下，不依赖任何插件。
+挂在访问端的 /api/plugins 下，不依赖任何插件。
 """
 from __future__ import annotations
 
@@ -10,10 +10,11 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from eta_web.plugins_manager.database import get_db
-from eta_web.plugins_manager.models import Plugin
+from eta_web.plugins_manager.models import Plugin, RemoteNode
 from eta_web.plugins_manager.schemas import (
     OnlinePluginInfo,
     OnlineRegistryStatus,
@@ -404,3 +405,165 @@ def update_online_plugin(name: str) -> PluginInstallResponse:
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return PluginInstallResponse(**result)
+
+
+# ===== 远程节点管理 =====
+
+
+def _get_remote_nodes_config(db: Session) -> list[dict]:
+    """供下载插件调用：获取已启用的远程节点配置列表
+
+    返回格式供 eta_shared.node_client.create_node_client 使用：
+    [{"name": "...", "url": "...", "username": "...", "password": "...", "verify_ssl": True}]
+    """
+    rows = (
+        db.query(RemoteNode)
+        .filter(RemoteNode.enabled.is_(True))
+        .order_by(RemoteNode.id)
+        .all()
+    )
+    return [
+        {
+            "name": r.name,
+            "url": r.url,
+            "username": r.username,
+            "password": r.password,
+            "verify_ssl": r.verify_ssl,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/remote-nodes")
+def list_remote_nodes(db: Session = Depends(get_db)) -> list[dict]:
+    """列出所有远程节点配置"""
+    rows = db.query(RemoteNode).order_by(RemoteNode.id).all()
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "url": r.url,
+            "username": r.username,
+            "verify_ssl": r.verify_ssl,
+            "enabled": r.enabled,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+
+
+class RemoteNodeCreate(BaseModel):
+    name: str
+    url: str
+    username: str = "admin"
+    password: str = ""
+    verify_ssl: bool = True
+    enabled: bool = True
+
+
+class RemoteNodeUpdate(BaseModel):
+    name: str | None = None
+    url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    verify_ssl: bool | None = None
+    enabled: bool | None = None
+
+
+@router.post("/remote-nodes", status_code=201)
+def create_remote_node(
+    payload: RemoteNodeCreate, db: Session = Depends(get_db)
+) -> dict:
+    """新增远程节点"""
+    existing = (
+        db.query(RemoteNode).filter(RemoteNode.name == payload.name).one_or_none()
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="节点名称已存在")
+    node = RemoteNode(
+        name=payload.name,
+        url=payload.url,
+        username=payload.username,
+        password=payload.password,
+        verify_ssl=payload.verify_ssl,
+        enabled=payload.enabled,
+    )
+    db.add(node)
+    db.commit()
+    db.refresh(node)
+    return {
+        "id": node.id,
+        "name": node.name,
+        "url": node.url,
+        "username": node.username,
+        "verify_ssl": node.verify_ssl,
+        "enabled": node.enabled,
+        "message": f"远程节点 '{node.name}' 已创建",
+    }
+
+
+@router.put("/remote-nodes/{node_id}")
+def update_remote_node(
+    node_id: int, payload: RemoteNodeUpdate, db: Session = Depends(get_db)
+) -> dict:
+    """更新远程节点配置"""
+    node = db.get(RemoteNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="远程节点不存在")
+    if payload.name is not None:
+        existing = (
+            db.query(RemoteNode)
+            .filter(RemoteNode.name == payload.name, RemoteNode.id != node_id)
+            .one_or_none()
+        )
+        if existing:
+            raise HTTPException(status_code=400, detail="节点名称已存在")
+        node.name = payload.name
+    if payload.url is not None:
+        node.url = payload.url
+    if payload.username is not None:
+        node.username = payload.username
+    if payload.password is not None:
+        node.password = payload.password
+    if payload.verify_ssl is not None:
+        node.verify_ssl = payload.verify_ssl
+    if payload.enabled is not None:
+        node.enabled = payload.enabled
+    db.commit()
+    return {"message": f"远程节点 '{node.name}' 已更新"}
+
+
+@router.delete("/remote-nodes/{node_id}", status_code=204)
+def delete_remote_node(node_id: int, db: Session = Depends(get_db)):
+    """删除远程节点配置"""
+    node = db.get(RemoteNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="远程节点不存在")
+    db.delete(node)
+    db.commit()
+
+
+@router.post("/remote-nodes/{node_id}/test")
+def test_remote_node(node_id: int, db: Session = Depends(get_db)) -> dict:
+    """测试远程节点连接"""
+    node = db.get(RemoteNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="远程节点不存在")
+    try:
+        import requests as _requests
+
+        resp = _requests.post(
+            f"{node.url.rstrip('/')}/api/auth/login",
+            json={"username": node.username, "password": node.password},
+            verify=node.verify_ssl,
+            timeout=10,
+        )
+        if resp.status_code == 200 and resp.json().get("access_token"):
+            return {"success": True, "message": f"连接成功，节点 '{node.name}' 可用"}
+        return {
+            "success": False,
+            "message": f"认证失败（HTTP {resp.status_code}）：{resp.text[:200]}",
+        }
+    except Exception as e:
+        return {"success": False, "message": f"连接失败：{e}"}

@@ -31,6 +31,7 @@ DEFAULT_SETTINGS = {
     "bili_cookie": "",
     "default_subdir": "BiliAudio",
     "default_watch_dir_id": "",
+    "cache_pool_size_mb": "500",
 }
 
 
@@ -99,6 +100,7 @@ class SettingsUpdate(BaseModel):
     bili_cookie: Optional[str] = None
     default_subdir: Optional[str] = None
     default_watch_dir_id: Optional[str] = None
+    cache_pool_size_mb: Optional[str] = None
 
 
 @router.get("/settings")
@@ -172,6 +174,11 @@ def get_cover(
 
 @router.get("/target-nodes")
 def list_target_nodes(db: Session = Depends(get_db_bili)) -> dict:
+    """列出可下载目标节点
+
+    返回本地节点（需 local_node 已加载）和已配置的远程节点。
+    每个节点包含其 watch_dirs 列表，供前端选择下载目标。
+    """
     try:
         from eta_web.plugins_manager.routers import _loaded_in_process
     except ImportError:
@@ -191,7 +198,57 @@ def list_target_nodes(db: Session = Depends(get_db_bili)) -> dict:
                 "reason": "",
             }
         )
-    return {"nodes": nodes, "supported_types": ["local_node"]}
+
+    # 远程节点
+    try:
+        from eta_web.plugins_manager.routers import _get_remote_nodes_config
+        from eta_web.plugins_manager.database import SessionLocal as WebSession
+    except ImportError:
+        _get_remote_nodes_config = None
+
+    if _get_remote_nodes_config is not None:
+        web_db = WebSession()
+        try:
+            remote_nodes = _get_remote_nodes_config(web_db)
+        finally:
+            web_db.close()
+
+        for rn in remote_nodes:
+            try:
+                from eta_shared.node_client import RemoteNodeClient
+
+                client = RemoteNodeClient(
+                    base_url=rn["url"],
+                    username=rn.get("username", "admin"),
+                    password=rn.get("password", ""),
+                    verify_ssl=rn.get("verify_ssl", True),
+                )
+                watch_dirs = client.get_watch_dirs()
+                nodes.append(
+                    {
+                        "type": "remote",
+                        "id": f"remote:{rn['name']}",
+                        "name": rn["name"],
+                        "base_url": rn["url"],
+                        "writable": True,
+                        "watch_dirs": watch_dirs,
+                        "reason": "",
+                    }
+                )
+            except Exception as e:
+                nodes.append(
+                    {
+                        "type": "remote",
+                        "id": f"remote:{rn['name']}",
+                        "name": rn["name"],
+                        "base_url": rn["url"],
+                        "writable": False,
+                        "watch_dirs": [],
+                        "reason": f"连接失败: {e}",
+                    }
+                )
+
+    return {"nodes": nodes, "supported_types": ["local_node", "remote"]}
 
 
 # ===== 下载任务 =====
@@ -203,7 +260,7 @@ class DownloadCreate(BaseModel):
     target_node_id: str = Field(default="local_node")
     watch_dir_id: int
     subdir: Optional[str] = None
-    files: list[dict] = []
+    files: list[dict] = Field(default_factory=list)
     selected_paths: Optional[list[str]] = None
     metadata: Optional[dict] = None
 
@@ -219,7 +276,7 @@ def create_download(
         auid=payload.auid,
         title=payload.title,
         source_id=payload.source_id,
-        target_base_url="/local_node",
+        target_base_url=payload.target_node_id,
         target_watch_dir_id=payload.watch_dir_id,
         target_subdir=subdir,
         status="pending",

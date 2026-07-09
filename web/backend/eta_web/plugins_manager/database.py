@@ -1,4 +1,4 @@
-"""访问端骨架自身的数据库
+"""访问端自身的数据库
 
 与插件的数据库完全隔离，只存储访问端元数据（如插件注册表）。
 """
@@ -26,7 +26,7 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 class Base(DeclarativeBase):
-    """访问端骨架 ORM 基类"""
+    """访问端 ORM 基类"""
 
     pass
 

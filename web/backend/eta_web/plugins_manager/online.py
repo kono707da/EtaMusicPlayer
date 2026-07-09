@@ -53,7 +53,7 @@ class OnlinePlugin:
         }
 
     def is_compatible(self) -> tuple[bool, str]:
-        """检查当前骨架版本是否兼容此插件
+        """检查当前访问端版本是否兼容此插件
 
         返回 (compatible, reason)
         """
@@ -63,8 +63,8 @@ class OnlinePlugin:
             spec = SpecifierSet(self.eta_web_version)
             current = Version(ETA_WEB_VERSION)
             if current in spec:
-                return True, f"兼容 (骨架 {ETA_WEB_VERSION} 满足 {self.eta_web_version})"
-            return False, f"不兼容 (骨架 {ETA_WEB_VERSION} 不满足 {self.eta_web_version})"
+                return True, f"兼容 (访问端 {ETA_WEB_VERSION} 满足 {self.eta_web_version})"
+            return False, f"不兼容 (访问端 {ETA_WEB_VERSION} 不满足 {self.eta_web_version})"
         except (InvalidVersion, Exception) as e:
             return False, f"版本约束解析失败: {e}"
 

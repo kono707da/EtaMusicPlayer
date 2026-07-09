@@ -16,7 +16,8 @@ const form = ref({
   proxy_url: '',
   verify_ssl: true,
   subdir: '',
-  default_watch_dir_id: ''
+  default_watch_dir_id: '',
+  cache_pool_size_mb: '500'
 })
 const loading = ref(false)
 const saving = ref(false)
@@ -29,7 +30,8 @@ async function load() {
       proxy_url: data.proxy_url ?? '',
       verify_ssl: data.verify_ssl !== 'false' && data.verify_ssl !== '0',
       subdir: data.subdir ?? '',
-      default_watch_dir_id: data.default_watch_dir_id ?? ''
+      default_watch_dir_id: data.default_watch_dir_id ?? '',
+      cache_pool_size_mb: data.cache_pool_size_mb ?? '500'
     }
   } catch (e) {
     toast.error('加载失败', e?.response?.data?.detail || e.message)
@@ -96,6 +98,14 @@ onMounted(load)
         <p class="text-xs text-muted-foreground">
           文件将下载到 <code>{watch_dir}/{子目录}/{作品名}/{文件路径}</code>。
           留空表示直接放在 watch_dir 根下。
+        </p>
+      </div>
+
+      <div class="flex flex-col gap-1.5">
+        <Label>缓存池大小（MB）</Label>
+        <Input v-model="form.cache_pool_size_mb" type="number" placeholder="500" />
+        <p class="text-xs text-muted-foreground">
+          远程节点下载时，访问端缓存的临时文件最大大小（MB）。超过此大小会暂停下载并上传已有文件。
         </p>
       </div>
 
