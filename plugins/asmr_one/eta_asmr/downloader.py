@@ -457,8 +457,9 @@ def _worker(task_id: int) -> None:
         from eta_asmr.routers import _get_settings_dict
 
         settings = _get_settings_dict(db)
-        proxy = settings.get("proxy_url") or "http://127.0.0.1:7897"
-        client = AsmrClient(proxy_url=proxy)
+        proxy = settings.get("proxy_url") or None
+        verify_ssl = settings.get("verify_ssl", "true").lower() not in ("false", "0", "no")
+        client = AsmrClient(proxy_url=proxy, verify_ssl=verify_ssl)
 
         completed = 0
         skipped = 0

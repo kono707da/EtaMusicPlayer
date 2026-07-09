@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api/asmr", tags=["asmr"])
 
 DEFAULT_SETTINGS = {
     "proxy_url": "http://127.0.0.1:7897",
+    "verify_ssl": "true",
     "subdir": "ASMR",
     "default_watch_dir_id": "",
 }
@@ -107,6 +108,7 @@ def _require_token(db: Session) -> str:
 
 class SettingsUpdate(BaseModel):
     proxy_url: Optional[str] = None
+    verify_ssl: Optional[str] = None
     subdir: Optional[str] = None
     default_watch_dir_id: Optional[str] = None
 
@@ -129,7 +131,8 @@ def update_settings(
 def _make_client(db: Session) -> AsmrClient:
     settings = _get_settings_dict(db)
     proxy = settings.get("proxy_url") or None
-    return AsmrClient(proxy_url=proxy)
+    verify_ssl = settings.get("verify_ssl", "true").lower() not in ("false", "0", "no")
+    return AsmrClient(proxy_url=proxy, verify_ssl=verify_ssl)
 
 
 # ===== 搜索 / 作品 / 文件树 / 封面 =====
@@ -285,10 +288,9 @@ def preview_text(
         raise HTTPException(status_code=400, detail="只允许预览 asmr.one 的文件")
     client = _make_client(db)
     try:
-        r = requests.get(
+        r = client.session.get(
             url,
             headers=client._auth_headers(_get_token(db)) if _get_token(db) else {},
-            proxies=client._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         r.raise_for_status()
@@ -846,8 +848,9 @@ def apply_cover(
         raise HTTPException(status_code=400, detail="任务未完成，无法应用封面")
 
     settings = _get_settings_dict(db)
-    proxy = settings.get("proxy_url") or "http://127.0.0.1:7897"
-    client = AsmrClient(proxy_url=proxy)
+    proxy = settings.get("proxy_url") or None
+    verify_ssl = settings.get("verify_ssl", "true").lower() not in ("false", "0", "no")
+    client = AsmrClient(proxy_url=proxy, verify_ssl=verify_ssl)
 
     meta = task.metadata_json or {}
     meta["cover_type"] = payload.cover_type

@@ -5,9 +5,12 @@ API 文档：https://api.asmr.one
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 API_BASE = "https://api.asmr.one/api"
 
@@ -15,21 +18,67 @@ DEFAULT_TIMEOUT = 30
 DOWNLOAD_TIMEOUT = 60
 STREAM_CHUNK = 64 * 1024
 
+logger = logging.getLogger("etamusic.plugins.asmr_one")
+
 
 class AsmrError(Exception):
     pass
 
 
+class _SSLAdapter(HTTPAdapter):
+    """自定义 HTTPAdapter，支持禁用 SSL 验证和自动重试。"""
+
+    def __init__(self, verify_ssl: bool = True, **kwargs):
+        self._verify_ssl = verify_ssl
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, *args, **kwargs):
+        if not self._verify_ssl:
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            kwargs["ssl_context"] = ctx
+        super().init_poolmanager(*args, **kwargs)
+
+
 class AsmrClient:
-    """asmr.one API 客户端，通过 requests + 代理访问"""
+    """asmr.one API 客户端，通过 requests.Session + 代理访问
 
-    def __init__(self, proxy_url: Optional[str] = "http://127.0.0.1:7897") -> None:
+    Args:
+        proxy_url: HTTP 代理地址，为空则直连
+        verify_ssl: 是否验证 SSL 证书，通过代理访问时若遇到
+            SSLEOFError 可设为 False
+    """
+
+    def __init__(
+        self,
+        proxy_url: Optional[str] = "http://127.0.0.1:7897",
+        verify_ssl: bool = True,
+    ) -> None:
         self.proxy_url = proxy_url
+        self.verify_ssl = verify_ssl
+        self.session = self._build_session()
 
-    def _proxies(self) -> Optional[dict]:
-        if not self.proxy_url:
-            return None
-        return {"http": self.proxy_url, "https": self.proxy_url}
+    def _build_session(self) -> requests.Session:
+        retry = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[502, 503, 504],
+            allowed_methods=["GET", "POST", "PUT", "DELETE", "HEAD"],
+            raise_on_status=False,
+        )
+        adapter = _SSLAdapter(
+            verify_ssl=self.verify_ssl,
+            max_retries=retry,
+        )
+        s = requests.Session()
+        s.mount("https://", adapter)
+        s.mount("http://", adapter)
+        s.verify = self.verify_ssl
+        if self.proxy_url:
+            s.proxies = {"http": self.proxy_url, "https": self.proxy_url}
+        return s
 
     def search(
         self,
@@ -53,7 +102,7 @@ class AsmrClient:
         }
         if subtitle:
             params["subtitle"] = int(subtitle)
-        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -81,7 +130,7 @@ class AsmrClient:
         }
         if subtitle:
             params["subtitle"] = int(subtitle)
-        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -109,7 +158,7 @@ class AsmrClient:
         }
         if subtitle:
             params["subtitle"] = int(subtitle)
-        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -136,7 +185,7 @@ class AsmrClient:
         }
         if subtitle:
             params["subtitle"] = int(subtitle)
-        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -163,21 +212,21 @@ class AsmrClient:
         }
         if subtitle:
             params["subtitle"] = int(subtitle)
-        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
     def get_work(self, work_id: int) -> dict:
         """获取作品详情"""
         url = f"{API_BASE}/work/{work_id}"
-        r = requests.get(url, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
     def get_work_info(self, work_id: int) -> dict:
         """获取作品额外信息（workInfo）"""
         url = f"{API_BASE}/workInfo/{work_id}"
-        r = requests.get(url, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -188,13 +237,13 @@ class AsmrClient:
 
         GET /api/auth/me 返回 {user: {loggedIn: bool, ...}, auth: bool, reg: bool}
         """
-        r = requests.get(f"{API_BASE}/auth/me", proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(f"{API_BASE}/auth/me", timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
     def check_reg_enabled(self) -> dict:
         """检查是否允许注册"""
-        r = requests.get(f"{API_BASE}/auth/reg", proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(f"{API_BASE}/auth/reg", timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -204,14 +253,12 @@ class AsmrClient:
         POST /api/auth/me body {name, password} headers {Authorization: null}
         成功返回 {token: "...", user: {...}}
         """
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/auth/me",
             json={"name": name, "password": password},
-            headers={"Authorization": None},  # 关键：覆盖掉默认的 Authorization 头
-            proxies=self._proxies(),
+            headers={"Authorization": None},
             timeout=DEFAULT_TIMEOUT,
         )
-        # 401 时 raise_for_status 会抛错，但我们要保留错误信息
         if r.status_code == 401:
             try:
                 err = r.json()
@@ -226,11 +273,10 @@ class AsmrClient:
         body: dict = {"name": name, "password": password}
         if recommender_uuid:
             body["recommenderUuid"] = recommender_uuid
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/auth/reg",
             json=body,
             headers={"Authorization": None},
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code >= 400:
@@ -256,14 +302,12 @@ class AsmrClient:
     ) -> dict:
         """获取我的评价列表"""
         params: dict = {"order": order, "sort": sort, "page": page}
-        # asmr.one 不接受 filter 空字符串，会返回 400
         if filter:
             params["filter"] = filter
-        r = requests.get(
+        r = self.session.get(
             f"{API_BASE}/review",
             params=params,
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -280,7 +324,7 @@ class AsmrClient:
         progress: str = "",
     ) -> dict:
         """提交/更新评价"""
-        r = requests.put(
+        r = self.session.put(
             f"{API_BASE}/review",
             json={
                 "work_id": work_id,
@@ -289,7 +333,6 @@ class AsmrClient:
                 "progress": progress,
             },
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -299,11 +342,10 @@ class AsmrClient:
 
     def delete_review(self, token: str, work_id: int) -> dict:
         """删除评价"""
-        r = requests.delete(
+        r = self.session.delete(
             f"{API_BASE}/review",
             params={"work_id": work_id},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -318,14 +360,12 @@ class AsmrClient:
     ) -> dict:
         """列出我的所有播放列表"""
         params: dict = {"page": page, "pageSize": page_size}
-        # asmr.one 不接受空字符串 filterBy
         if filter_by:
             params["filterBy"] = filter_by
-        r = requests.get(
+        r = self.session.get(
             f"{API_BASE}/playlist/get-playlists",
             params=params,
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -335,11 +375,10 @@ class AsmrClient:
 
     def delete_playlist(self, token: str, playlist_id) -> dict:
         """删除播放列表"""
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/playlist/delete-playlist",
             json={"id": playlist_id},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -349,10 +388,9 @@ class AsmrClient:
 
     def get_default_playlist(self, token: str) -> dict:
         """获取默认收藏目标播放列表"""
-        r = requests.get(
+        r = self.session.get(
             f"{API_BASE}/playlist/get-default-mark-target-playlist",
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -362,11 +400,10 @@ class AsmrClient:
 
     def get_playlist_metadata(self, token: str, playlist_id) -> dict:
         """获取播放列表元数据（不含作品列表，asmr.one 此接口 works 字段为 null）"""
-        r = requests.get(
+        r = self.session.get(
             f"{API_BASE}/playlist/get-playlist-metadata",
             params={"id": playlist_id},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -378,11 +415,10 @@ class AsmrClient:
         self, token: str, playlist_id, page: int = 1, page_size: int = 50
     ) -> dict:
         """获取播放列表内的作品列表（分页）"""
-        r = requests.get(
+        r = self.session.get(
             f"{API_BASE}/playlist/get-playlist-works",
             params={"id": playlist_id, "page": page, "pageSize": page_size},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -394,11 +430,10 @@ class AsmrClient:
         self, token: str, work_id: int, page: int = 1, page_size: int = 50
     ) -> dict:
         """查询作品在我的播放列表中的存在状态"""
-        r = requests.get(
+        r = self.session.get(
             f"{API_BASE}/playlist/get-work-exist-status-in-my-playlists",
             params={"workID": work_id, "page": page, "pageSize": page_size, "version": 2},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -416,7 +451,7 @@ class AsmrClient:
         works: list = None,
     ) -> dict:
         """创建播放列表"""
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/playlist/create-playlist",
             json={
                 "name": name,
@@ -426,7 +461,6 @@ class AsmrClient:
                 "works": works or [],
             },
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -436,11 +470,10 @@ class AsmrClient:
 
     def add_works_to_playlist(self, token: str, playlist_id, works: list) -> dict:
         """添加作品到播放列表"""
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/playlist/add-works-to-playlist",
             json={"id": playlist_id, "works": works},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -450,11 +483,10 @@ class AsmrClient:
 
     def remove_works_from_playlist(self, token: str, playlist_id, works: list) -> dict:
         """从播放列表移除作品"""
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/playlist/remove-works-from-playlist",
             json={"id": playlist_id, "works": works},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -478,11 +510,10 @@ class AsmrClient:
             body["keyword"] = keyword
         if subtitle:
             body["subtitle"] = subtitle
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/recommender/popular",
             json=body,
             headers=self._auth_headers(token) if token else {},
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         r.raise_for_status()
@@ -505,11 +536,10 @@ class AsmrClient:
             body["recommenderUuid"] = recommender_uuid
         if subtitle:
             body["subtitle"] = subtitle
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/recommender/recommend-for-user",
             json=body,
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -519,11 +549,10 @@ class AsmrClient:
 
     def item_neighbors(self, item_id: int, token: str = None) -> dict:
         """相似作品推荐"""
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/recommender/item-neighbors",
             json={"itemId": item_id},
             headers=self._auth_headers(token) if token else {},
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         r.raise_for_status()
@@ -533,7 +562,7 @@ class AsmrClient:
         self, token: str, feedback_type: str, recommender_uuid: str, item_id: int
     ) -> dict:
         """推荐反馈（type: 'like'/'dislike'/'unlike'/'undislike'）"""
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/recommender/feedback",
             json={
                 "type": feedback_type,
@@ -541,7 +570,6 @@ class AsmrClient:
                 "itemId": item_id,
             },
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -555,11 +583,10 @@ class AsmrClient:
         self, token: str, work_id: int, tag_id: int, status: int
     ) -> dict:
         """给作品标签投票（status: 1=赞同, -1=反对, 0=取消）"""
-        r = requests.post(
+        r = self.session.post(
             f"{API_BASE}/vote/vote-work-tag",
             json={"workID": work_id, "tagID": tag_id, "status": status},
             headers=self._auth_headers(token),
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         if r.status_code == 401:
@@ -570,7 +597,7 @@ class AsmrClient:
     def get_tracks(self, work_id: int) -> list[dict]:
         """获取作品文件树（递归结构）"""
         url = f"{API_BASE}/tracks/{work_id}"
-        r = requests.get(url, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.json()
 
@@ -578,14 +605,14 @@ class AsmrClient:
         """获取封面图字节"""
         url = f"{API_BASE}/cover/{work_id}.jpg"
         params = {"type": cover_type}
-        r = requests.get(url, params=params, proxies=self._proxies(), timeout=DEFAULT_TIMEOUT)
+        r = self.session.get(url, params=params, timeout=DEFAULT_TIMEOUT)
         r.raise_for_status()
         return r.content
 
     def stream_download(self, url: str, chunk_size: int = STREAM_CHUNK):
         """流式下载，yield 字节块"""
-        with requests.get(
-            url, stream=True, proxies=self._proxies(), timeout=DOWNLOAD_TIMEOUT
+        with self.session.get(
+            url, stream=True, timeout=DOWNLOAD_TIMEOUT
         ) as r:
             r.raise_for_status()
             for chunk in r.iter_content(chunk_size=chunk_size):
@@ -594,10 +621,9 @@ class AsmrClient:
 
     def head(self, url: str) -> dict:
         """HEAD 请求，返回 headers"""
-        r = requests.head(
+        r = self.session.head(
             url,
             allow_redirects=True,
-            proxies=self._proxies(),
             timeout=DEFAULT_TIMEOUT,
         )
         r.raise_for_status()

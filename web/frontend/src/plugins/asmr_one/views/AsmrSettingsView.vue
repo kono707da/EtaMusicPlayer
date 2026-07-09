@@ -5,6 +5,7 @@ import { ArrowLeft, Save, Loader2 } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { getSettings, updateSettings } from '../api'
 
@@ -13,6 +14,7 @@ const toast = useToast()
 
 const form = ref({
   proxy_url: '',
+  verify_ssl: true,
   subdir: '',
   default_watch_dir_id: ''
 })
@@ -25,6 +27,7 @@ async function load() {
     const data = await getSettings()
     form.value = {
       proxy_url: data.proxy_url ?? '',
+      verify_ssl: data.verify_ssl !== 'false' && data.verify_ssl !== '0',
       subdir: data.subdir ?? '',
       default_watch_dir_id: data.default_watch_dir_id ?? ''
     }
@@ -38,7 +41,10 @@ async function load() {
 async function save() {
   saving.value = true
   try {
-    await updateSettings(form.value)
+    await updateSettings({
+      ...form.value,
+      verify_ssl: form.value.verify_ssl ? 'true' : 'false'
+    })
     toast.success('设置已保存')
   } catch (e) {
     toast.error('保存失败', e?.response?.data?.detail || e.message)
@@ -72,6 +78,16 @@ onMounted(load)
         <p class="text-xs text-muted-foreground">
           访问 asmr.one 时使用的 HTTP 代理。留空则不使用代理。
         </p>
+      </div>
+
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex flex-col gap-1">
+          <Label>验证 SSL 证书</Label>
+          <p class="text-xs text-muted-foreground">
+            通过代理访问时如遇 SSL 错误（如 SSLEOFError），可关闭此选项。
+          </p>
+        </div>
+        <Switch v-model:checked="form.verify_ssl" />
       </div>
 
       <div class="flex flex-col gap-1.5">
