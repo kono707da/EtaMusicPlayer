@@ -411,10 +411,20 @@ class RemoteNodeClient(NodeClient):
             return False
 
     def find_tracks_by_paths(self, paths: list[str]) -> list[int]:
-        return []
+        try:
+            resp = self._request("POST", "/api/inbox/by-paths", json={"paths": paths})
+            return resp.json().get("track_ids", [])
+        except Exception as e:
+            logger.warning("远程按路径查找曲目失败: %s", e)
+            return []
 
     def add_tracks_to_inbox(self, track_ids: list[int]) -> int:
-        return 0
+        try:
+            resp = self._request("POST", "/api/inbox/add", json={"track_ids": track_ids})
+            return resp.json().get("added", 0)
+        except Exception as e:
+            logger.warning("远程添加收集箱失败: %s", e)
+            return 0
 
     def create_playlist(
         self,
@@ -422,7 +432,7 @@ class RemoteNodeClient(NodeClient):
         track_paths: list[str],
         description: str = "",
     ) -> Optional[int]:
-        """远程节点暂不支持自动创建播放列表，由扫描器自动加入收集箱"""
+        """远程节点暂不支持自动创建播放列表，统一添加到收集箱"""
         return None
 
 

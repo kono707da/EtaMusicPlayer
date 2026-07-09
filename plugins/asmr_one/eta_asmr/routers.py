@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Optional
 
@@ -19,6 +20,8 @@ from eta_asmr.downloader import (
     start_download_task,
 )
 from eta_asmr.models import DownloadFileStatus, DownloadTask, Setting
+
+logger = logging.getLogger("etamusic.plugins.asmr_one")
 
 router = APIRouter(prefix="/api/asmr", tags=["asmr"])
 
@@ -137,6 +140,12 @@ def _make_client(db: Session) -> AsmrClient:
     return AsmrClient(proxy_url=proxy, verify_ssl=verify_ssl)
 
 
+def _asmr_error(e: Exception) -> HTTPException:
+    """记录错误日志并返回 HTTPException"""
+    logger.warning("asmr.one API 请求失败: %s", e, exc_info=True)
+    return HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+
+
 # ===== 搜索 / 作品 / 文件树 / 封面 =====
 
 @router.get("/search")
@@ -155,7 +164,7 @@ def search(
             keyword, page=page, page_size=page_size, order_by=order_by, sort=sort, subtitle=subtitle
         ))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/works")
@@ -174,7 +183,7 @@ def list_works(
             page=page, page_size=page_size, order_by=order_by, sort=sort, subtitle=subtitle
         ))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/tags/{tag_id}/works")
@@ -194,7 +203,7 @@ def list_by_tag(
             tag_id, page=page, page_size=page_size, order_by=order_by, sort=sort, subtitle=subtitle
         ))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/vas/{va_id}/works")
@@ -214,7 +223,7 @@ def list_by_va(
             va_id, page=page, page_size=page_size, order_by=order_by, sort=sort, subtitle=subtitle
         ))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/circles/{circle_id}/works")
@@ -234,7 +243,7 @@ def list_by_circle(
             circle_id, page=page, page_size=page_size, order_by=order_by, sort=sort, subtitle=subtitle
         ))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/works/{work_id}")
@@ -243,7 +252,7 @@ def get_work(work_id: int, db: Session = Depends(get_db)) -> dict:
     try:
         return client.get_work(work_id)
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/works/{work_id}/tracks")
@@ -253,7 +262,7 @@ def get_work_tracks(work_id: int, db: Session = Depends(get_db)) -> dict:
     try:
         tree = client.get_tracks(work_id)
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
     files = flatten_file_tree(tree)
     return {
         "tree": tree,
@@ -312,7 +321,7 @@ def get_work_info(work_id: int, db: Session = Depends(get_db)) -> dict:
     try:
         return client.get_work_info(work_id)
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 # ===== 认证 =====
@@ -361,7 +370,7 @@ def auth_login(payload: LoginPayload, db: Session = Depends(get_db)) -> dict:
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
     token = data.get("token")
     if not token:
         raise HTTPException(status_code=500, detail="登录返回无 token")
@@ -377,7 +386,7 @@ def auth_register(payload: RegisterPayload, db: Session = Depends(get_db)) -> di
     except AsmrError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
     token = data.get("token")
     if token:
         _set_token(db, token)
@@ -414,7 +423,7 @@ def list_reviews(
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.put("/reviews")
@@ -432,7 +441,7 @@ def upsert_review(payload: ReviewUpsert, db: Session = Depends(get_db)) -> dict:
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.delete("/reviews")
@@ -444,7 +453,7 @@ def delete_review(work_id: int, db: Session = Depends(get_db)) -> dict:
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 # ===== 播放列表 / 收藏 =====
@@ -476,7 +485,7 @@ def list_playlists(
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/playlists/default")
@@ -488,7 +497,7 @@ def get_default_playlist(db: Session = Depends(get_db)) -> dict:
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/playlists/{playlist_id}")
@@ -500,7 +509,7 @@ def get_playlist_metadata(playlist_id: str, db: Session = Depends(get_db)) -> di
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/playlists/{playlist_id}/works")
@@ -519,7 +528,7 @@ def get_playlist_works(
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.delete("/playlists/{playlist_id}")
@@ -531,7 +540,7 @@ def delete_playlist(playlist_id: str, db: Session = Depends(get_db)) -> dict:
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/works/{work_id}/in-playlists")
@@ -543,7 +552,7 @@ def work_in_playlists(work_id: int, db: Session = Depends(get_db)) -> dict:
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.post("/playlists")
@@ -562,7 +571,7 @@ def create_playlist(payload: PlaylistCreate, db: Session = Depends(get_db)) -> d
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.post("/playlists/add")
@@ -574,7 +583,7 @@ def add_to_playlist(payload: PlaylistOps, db: Session = Depends(get_db)) -> dict
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.post("/playlists/remove")
@@ -586,7 +595,7 @@ def remove_from_playlist(payload: PlaylistOps, db: Session = Depends(get_db)) ->
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 # ===== 推荐 =====
@@ -604,7 +613,7 @@ def popular_works(
     try:
         return _ensure_total_page(client.popular_works(page=page, page_size=page_size, keyword=keyword, token=token))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/recommendations")
@@ -622,7 +631,7 @@ def recommend_for_user(
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 @router.get("/works/{work_id}/neighbors")
@@ -633,7 +642,7 @@ def work_neighbors(work_id: int, db: Session = Depends(get_db)) -> dict:
     try:
         return _ensure_total_page(client.item_neighbors(work_id, token=token))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 class FeedbackPayload(BaseModel):
@@ -651,7 +660,7 @@ def recommender_feedback(payload: FeedbackPayload, db: Session = Depends(get_db)
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 # ===== 标签投票 =====
@@ -671,7 +680,7 @@ def vote_work_tag(payload: VotePayload, db: Session = Depends(get_db)) -> dict:
     except AsmrError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"asmr.one 请求失败: {e}")
+        raise _asmr_error(e)
 
 
 # ===== 节点信息（local_node） =====

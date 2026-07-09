@@ -1,6 +1,6 @@
 """asmr.one API 客户端
 
-所有请求经配置的代理（默认 127.0.0.1:7897）发出。
+所有请求经配置的代理发出；代理失败时自动回退到直连。
 API 文档：https://api.asmr.one
 """
 from __future__ import annotations
@@ -42,25 +42,90 @@ class _SSLAdapter(HTTPAdapter):
         super().init_poolmanager(*args, **kwargs)
 
 
-class AsmrClient:
-    """asmr.one API 客户端，通过 requests.Session + 代理访问
+# 代理失败时自动回退到直连的异常类型
+_FALLBACK_EXC = (
+    requests.exceptions.SSLError,
+    requests.exceptions.ProxyError,
+    requests.exceptions.ConnectTimeout,
+    ConnectionError,
+)
 
-    Args:
-        proxy_url: HTTP 代理地址，为空则直连
-        verify_ssl: 是否验证 SSL 证书，通过代理访问时若遇到
-            SSLEOFError 可设为 False
+
+class _ProxyFallbackSession:
+    """Session 包装器：代理请求失败时自动切换到直连。
+
+    对外暴露与 requests.Session 相同的接口（get/post/put/delete/head），
+    内部维护两个真实 Session：一个走代理，一个直连。
+    首次代理失败后自动标记，后续请求全部走直连。
     """
 
     def __init__(
         self,
-        proxy_url: Optional[str] = "http://127.0.0.1:7897",
+        proxy_session: requests.Session,
+        direct_session: requests.Session,
+        proxy_url: Optional[str],
+    ) -> None:
+        self._proxy_session = proxy_session
+        self._direct_session = direct_session
+        self._proxy_url = proxy_url
+        self._proxy_failed = False
+
+    @property
+    def _active(self) -> requests.Session:
+        if self._proxy_failed or not self._proxy_url:
+            return self._direct_session
+        return self._proxy_session
+
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        try:
+            return self._active.request(method, url, **kwargs)
+        except _FALLBACK_EXC as e:
+            if not self._proxy_failed and self._proxy_url:
+                logger.warning(
+                    "代理 %s 请求 %s 失败 (%s)，自动切换到直连",
+                    self._proxy_url, url, e,
+                )
+                self._proxy_failed = True
+                return self._direct_session.request(method, url, **kwargs)
+            raise
+
+    def get(self, url, **kwargs):
+        return self._request("GET", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self._request("POST", url, **kwargs)
+
+    def put(self, url, **kwargs):
+        return self._request("PUT", url, **kwargs)
+
+    def delete(self, url, **kwargs):
+        return self._request("DELETE", url, **kwargs)
+
+    def head(self, url, **kwargs):
+        return self._request("HEAD", url, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._active, name)
+
+
+class AsmrClient:
+    """asmr.one API 客户端
+
+    Args:
+        proxy_url: HTTP 代理地址，为空则直连
+        verify_ssl: 是否验证 SSL 证书
+    """
+
+    def __init__(
+        self,
+        proxy_url: Optional[str] = None,
         verify_ssl: bool = True,
     ) -> None:
         self.proxy_url = proxy_url
         self.verify_ssl = verify_ssl
         self.session = self._build_session()
 
-    def _build_session(self) -> requests.Session:
+    def _build_session(self) -> _ProxyFallbackSession:
         retry = Retry(
             total=3,
             backoff_factor=0.5,
@@ -68,17 +133,22 @@ class AsmrClient:
             allowed_methods=["GET", "POST", "PUT", "DELETE", "HEAD"],
             raise_on_status=False,
         )
-        adapter = _SSLAdapter(
-            verify_ssl=self.verify_ssl,
-            max_retries=retry,
-        )
-        s = requests.Session()
-        s.mount("https://", adapter)
-        s.mount("http://", adapter)
-        s.verify = self.verify_ssl
+
+        def _make_session() -> requests.Session:
+            s = requests.Session()
+            adapter = _SSLAdapter(verify_ssl=self.verify_ssl, max_retries=retry)
+            s.mount("https://", adapter)
+            s.mount("http://", adapter)
+            s.verify = self.verify_ssl
+            return s
+
+        proxy_sess = _make_session()
         if self.proxy_url:
-            s.proxies = {"http": self.proxy_url, "https": self.proxy_url}
-        return s
+            proxy_sess.proxies = {"http": self.proxy_url, "https": self.proxy_url}
+
+        direct_sess = _make_session()
+
+        return _ProxyFallbackSession(proxy_sess, direct_sess, self.proxy_url)
 
     def search(
         self,

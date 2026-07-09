@@ -39,7 +39,7 @@ RUN mkdir -p /app/web/backend/data /app/node/data /app/plugins/asmr_one/data /ap
 
 EXPOSE 8000
 
-VOLUME ["/app/web/backend/data", "/app/node/data"]
+VOLUME ["/app/web/backend/data", "/app/node/data", "/app/data"]
 
 ENV TZ=Asia/Shanghai
 
