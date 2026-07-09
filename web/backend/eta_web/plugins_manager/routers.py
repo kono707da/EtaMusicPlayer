@@ -15,7 +15,10 @@ from sqlalchemy.orm import Session
 from eta_web.plugins_manager.database import get_db
 from eta_web.plugins_manager.models import Plugin
 from eta_web.plugins_manager.schemas import (
+    OnlinePluginInfo,
+    OnlineRegistryStatus,
     PluginDeleteResponse,
+    PluginInstallResponse,
     PluginOut,
     PluginRegistrySyncResponse,
     PluginRestartResponse,
@@ -26,6 +29,9 @@ from eta_web.plugins_manager.manager import (
     discover_plugins,
     sync_plugin_registry,
 )
+from eta_web.plugins_manager.online import registry as online_registry
+from eta_web.plugins_manager.installer import install_plugin, update_plugin
+from eta_web import __version__ as ETA_WEB_VERSION
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
@@ -306,3 +312,88 @@ def local_node_status(db: Session = Depends(get_db)) -> dict:
                 local_db.close()
 
     return result
+
+
+# ===== 在线插件注册表 =====
+
+
+@router.get("/online", response_model=list[OnlinePluginInfo])
+def list_online_plugins(db: Session = Depends(get_db)) -> list[OnlinePluginInfo]:
+    """获取在线插件列表（合并本地安装状态和版本兼容性）
+
+    从 GitHub plugins.json 获取在线插件信息，与本地已安装插件对比，
+    返回每个插件的安装状态、版本差异和兼容性检查结果。
+    """
+    discovered = set(discover_plugins())
+    rows = db.query(Plugin).order_by(Plugin.name).all()
+    local_plugins = [
+        {
+            "name": r.name,
+            "version": r.version,
+            "enabled": r.enabled,
+            "files_present": r.name in discovered,
+        }
+        for r in rows
+    ]
+
+    merged = online_registry.compare_with_local(local_plugins)
+    return [OnlinePluginInfo(**p) for p in merged]
+
+
+@router.get("/online/status", response_model=OnlineRegistryStatus)
+def online_registry_status() -> OnlineRegistryStatus:
+    """检查在线注册表连接状态"""
+    try:
+        plugins = online_registry.fetch_plugins()
+        return OnlineRegistryStatus(
+            available=True,
+            plugin_count=len(plugins),
+            eta_web_version=ETA_WEB_VERSION,
+        )
+    except (ConnectionError, ValueError) as e:
+        return OnlineRegistryStatus(
+            available=False,
+            plugin_count=0,
+            error=str(e),
+            eta_web_version=ETA_WEB_VERSION,
+        )
+
+
+@router.post("/online/refresh")
+def refresh_online_registry() -> dict:
+    """强制刷新在线注册表缓存"""
+    try:
+        plugins = online_registry.fetch_plugins(force=True)
+        return {
+            "success": True,
+            "count": len(plugins),
+            "message": f"已刷新在线注册表，获取到 {len(plugins)} 个插件",
+        }
+    except (ConnectionError, ValueError) as e:
+        raise HTTPException(status_code=502, detail=f"无法连接在线注册表: {e}")
+
+
+@router.post("/online/{name}/install", response_model=PluginInstallResponse)
+def install_online_plugin(name: str) -> PluginInstallResponse:
+    """从在线注册表安装插件
+
+    流程：下载仓库 zip → 解压插件目录 → 安装依赖 → 同步注册表
+    安装后需要重启服务才能加载新插件。
+    """
+    result = install_plugin(name)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return PluginInstallResponse(**result)
+
+
+@router.post("/online/{name}/update", response_model=PluginInstallResponse)
+def update_online_plugin(name: str) -> PluginInstallResponse:
+    """从在线注册表更新插件
+
+    流程与安装相同，但会覆盖已安装的插件目录。
+    更新后需要重启服务才能生效。
+    """
+    result = update_plugin(name)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return PluginInstallResponse(**result)

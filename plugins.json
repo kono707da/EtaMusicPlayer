@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-07-09T00:00:00Z",
+  "plugins": [
+    {
+      "name": "local_node",
+      "package": "eta_node",
+      "display_name": "本地节点",
+      "description": "本地音乐库管理节点：扫描/流式/播放列表/用户/权限/元数据/去重/音质",
+      "version": "1.0.0",
+      "author": "EtaMusic",
+      "eta_web_version": ">=1.0.0,<2.0.0",
+      "directory": "node",
+      "entry": "eta_node/plugin.py",
+      "requirements": "node/requirements.txt",
+      "category": "core",
+      "icon": "hard-drive"
+    },
+    {
+      "name": "asmr_one",
+      "package": "eta_asmr",
+      "display_name": "ASMR One",
+      "description": "浏览 asmr.one 作品并下载到本地节点（带代理支持）",
+      "version": "1.0.0",
+      "author": "EtaMusic",
+      "eta_web_version": ">=1.0.0,<2.0.0",
+      "directory": "plugins/asmr_one",
+      "entry": "eta_asmr/plugin.py",
+      "requirements": "plugins/asmr_one/requirements.txt",
+      "category": "download",
+      "icon": "headphones"
+    },
+    {
+      "name": "bili_audio",
+      "package": "eta_bili",
+      "display_name": "B站音频",
+      "description": "浏览 B站音频区并下载到本地节点，支持合集订阅",
+      "version": "1.0.0",
+      "author": "EtaMusic",
+      "eta_web_version": ">=1.0.0,<2.0.0",
+      "directory": "plugins/bili_audio",
+      "entry": "eta_bili/plugin.py",
+      "requirements": "plugins/bili_audio/requirements.txt",
+      "category": "download",
+      "icon": "music"
+    }
+  ]
+}

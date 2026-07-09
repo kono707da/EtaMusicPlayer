@@ -58,3 +58,35 @@ export async function getLocalNodeStatus() {
   const resp = await client.get('/api/plugins/local-node/status', { timeout: 5000 })
   return resp.data
 }
+
+// ===== 在线插件注册表 =====
+
+// 获取在线插件列表（合并本地安装状态）
+export async function listOnlinePlugins() {
+  const resp = await client.get('/api/plugins/online', { timeout: 30000 })
+  return resp.data
+}
+
+// 检查在线注册表连接状态
+export async function getOnlineRegistryStatus() {
+  const resp = await client.get('/api/plugins/online/status', { timeout: 15000 })
+  return resp.data
+}
+
+// 强制刷新在线注册表缓存
+export async function refreshOnlineRegistry() {
+  const resp = await client.post('/api/plugins/online/refresh', null, { timeout: 30000 })
+  return resp.data
+}
+
+// 从在线注册表安装插件
+export async function installOnlinePlugin(name) {
+  const resp = await client.post(`/api/plugins/online/${name}/install`, null, { timeout: 120000 })
+  return resp.data
+}
+
+// 从在线注册表更新插件
+export async function updateOnlinePlugin(name) {
+  const resp = await client.post(`/api/plugins/online/${name}/update`, null, { timeout: 120000 })
+  return resp.data
+}
