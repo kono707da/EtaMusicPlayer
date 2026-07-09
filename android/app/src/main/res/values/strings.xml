@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EtaMusic</string>
+    <string name="login">登录</string>
+    <string name="server_url">服务器地址</string>
+    <string name="username">用户名</string>
+    <string name="password">密码</string>
+    <string name="library">音乐库</string>
+    <string name="playlists">播放列表</string>
+    <string name="now_playing">正在播放</string>
+    <string name="not_playing">未在播放</string>
+    <string name="under_development">正在开发中…</string>
+</resources>
