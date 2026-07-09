@@ -511,29 +511,7 @@ def _worker(task_id: int) -> None:
             # 触发扫描
             node_client.trigger_scan()
 
-            # 本地节点：添加到收集箱
-            if node_client.is_local:
-                try:
-                    file_statuses = (
-                        db.query(DownloadFileStatus)
-                        .filter(
-                            DownloadFileStatus.task_id == task.id,
-                            DownloadFileStatus.status.in_(["completed", "skipped"]),
-                            DownloadFileStatus.saved_to.isnot(None),
-                        )
-                        .all()
-                    )
-                    saved_paths = [fs.saved_to for fs in file_statuses if fs.saved_to]
-                    if saved_paths:
-                        track_ids = node_client.find_tracks_by_paths(saved_paths)
-                        if track_ids:
-                            added = node_client.add_tracks_to_inbox(track_ids)
-                            if added > 0:
-                                logger.info("已将 %d 首曲目添加到收集箱", added)
-                except Exception as e:
-                    logger.warning("添加到收集箱失败: %s", e)
-
-            # 创建播放列表
+            # 添加到收集箱（本地和远程节点均支持）
             try:
                 file_statuses = (
                     db.query(DownloadFileStatus)
@@ -544,19 +522,15 @@ def _worker(task_id: int) -> None:
                     )
                     .all()
                 )
-                audio_paths = [
-                    fs.saved_to for fs in file_statuses
-                    if fs.saved_to and Path(fs.saved_to).suffix.lower() in AUDIO_EXTS
-                ]
-                if audio_paths:
-                    playlist_name = task.work_title or f"ASMR {task.work_id}"
-                    node_client.create_playlist(
-                        name=playlist_name,
-                        track_paths=audio_paths,
-                        description=f"asmr.one work_id={task.work_id}",
-                    )
+                saved_paths = [fs.saved_to for fs in file_statuses if fs.saved_to]
+                if saved_paths:
+                    track_ids = node_client.find_tracks_by_paths(saved_paths)
+                    if track_ids:
+                        added = node_client.add_tracks_to_inbox(track_ids)
+                        if added > 0:
+                            logger.info("已将 %d 首曲目添加到收集箱", added)
             except Exception as e:
-                logger.warning("任务 %s: 创建播放列表失败: %s", task.id, e)
+                logger.warning("添加到收集箱失败: %s", e)
 
     except Exception as e:
         logger.error("下载任务 %s 异常: %s", task_id, e, exc_info=True)

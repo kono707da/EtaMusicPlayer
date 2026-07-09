@@ -24,6 +24,7 @@ from eta_node.dedup import DEFAULT_FIELDS, DEFAULT_DURATION_TOLERANCE
 from eta_node.routers import (
     auth,
     dedup,
+    inbox,
     metadata,
     permissions,
     playlists,
@@ -145,6 +146,7 @@ def create_local_node_app() -> FastAPI:
     sub_app.include_router(watch_dirs.router)
     sub_app.include_router(scan.router)
     sub_app.include_router(upload.router)
+    sub_app.include_router(inbox.router)
     sub_app.include_router(users.router)
     sub_app.include_router(permissions.router)
     sub_app.include_router(dedup.router)

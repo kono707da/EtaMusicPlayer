@@ -391,43 +391,29 @@ def _worker(task_id: int) -> None:
             _apply_metadata_and_cover(db, task, client, base_dir)
 
             if is_remote and cache_dir:
-                # 远程节点：上传所有文件到远程节点
-                _upload_all_to_remote(task, node_client, cache_dir)
+                # 远程节点：上传所有文件到远程节点，获取远程路径
+                remote_paths = _upload_all_to_remote(task, node_client, cache_dir)
                 _clean_cache_dir(task_id)
+                # 用远程节点上的路径替换本地缓存路径
+                saved_paths = remote_paths
 
             # 触发扫描
             node_client.trigger_scan()
 
-            # 本地节点：添加到收集箱 + 创建播放列表
-            if node_client.is_local:
-                try:
-                    audio_paths = [
-                        p for p in saved_paths
-                        if Path(p).suffix.lower() in _AUDIO_EXTS
-                    ]
-                    if audio_paths:
-                        track_ids = node_client.find_tracks_by_paths(audio_paths)
-                        if track_ids:
-                            added = node_client.add_tracks_to_inbox(track_ids)
-                            if added > 0:
-                                logger.info("已将 %d 首曲目添加到收集箱", added)
-                except Exception as e:
-                    logger.warning("添加到收集箱失败: %s", e)
-
-                try:
-                    audio_paths = [
-                        p for p in saved_paths
-                        if Path(p).suffix.lower() in _AUDIO_EXTS
-                    ]
-                    if audio_paths:
-                        playlist_name = task.title or f"BiliAudio {task.auid}"
-                        node_client.create_playlist(
-                            name=playlist_name,
-                            track_paths=audio_paths,
-                            description=f"bilibili audio auid={task.auid}",
-                        )
-                except Exception as e:
-                    logger.warning("任务 %s: 创建播放列表失败: %s", task.id, e)
+            # 添加到收集箱（本地和远程节点均支持）
+            try:
+                audio_paths = [
+                    p for p in saved_paths
+                    if Path(p).suffix.lower() in _AUDIO_EXTS
+                ]
+                if audio_paths:
+                    track_ids = node_client.find_tracks_by_paths(audio_paths)
+                    if track_ids:
+                        added = node_client.add_tracks_to_inbox(track_ids)
+                        if added > 0:
+                            logger.info("已将 %d 首曲目添加到收集箱", added)
+            except Exception as e:
+                logger.warning("添加到收集箱失败: %s", e)
 
     except Exception as e:
         logger.error("下载任务 %s 异常: %s", task_id, e, exc_info=True)
@@ -490,12 +476,13 @@ def _upload_all_to_remote(
     task: BiliDownloadTask,
     node_client,
     cache_dir: Path,
-) -> None:
-    """上传所有缓存文件到远程节点"""
+) -> list[str]:
+    """上传所有缓存文件到远程节点，返回远程节点上的绝对路径列表"""
+    remote_paths: list[str] = []
     work_dir_name = _sanitize(task.title)
     cache_work_dir = cache_dir / work_dir_name
     if not cache_work_dir.exists():
-        return
+        return remote_paths
     for f in list(cache_work_dir.rglob("*")):
         if not f.is_file():
             continue
@@ -507,17 +494,20 @@ def _upload_all_to_remote(
             if parts and parts[0] == work_dir_name:
                 parts = parts[1:]
             file_rel = "/".join(parts)
-            node_client.save_file(
+            saved_to = node_client.save_file(
                 watch_dir_id=task.target_watch_dir_id,
                 subdir=task.target_subdir or "",
                 work_title=task.title,
                 file_rel_path=file_rel,
                 source_path=f,
             )
+            if saved_to:
+                remote_paths.append(saved_to)
             f.unlink(missing_ok=True)
             logger.info("任务 %s: 已上传 %s 到远程节点", task.id, file_rel)
         except Exception as e:
             logger.warning("任务 %s: 上传文件失败 %s: %s", task.id, f, e)
+    return remote_paths
 
 
 def start_download_task(task_id: int) -> None:
