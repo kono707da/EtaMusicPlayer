@@ -34,9 +34,11 @@ import {
   createRemoteNode,
   updateRemoteNode,
   deleteRemoteNode,
-  testRemoteNode
+  testRemoteNode,
+  loginRemoteNode,
+  activateRemoteNode
 } from '../api/plugin'
-import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, Plug } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, LogIn, LogOut, Star } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -51,19 +53,41 @@ const editingNode = ref(null)
 const presetNode = ref(null)
 const loggingId = ref(null)
 
-// 本地节点状态（来自 pluginsStore，应用启动时已同步）
 const localNode = computed(() => pluginsStore.localNode)
-// 本地节点在 nodes store 中的记录（自动连接后已有 token）
 const localNodeRecord = computed(() =>
   nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
 )
 
-// 远程节点 = 所有非 /local_node 的节点
-const remoteNodes = computed(() =>
-  nodesStore.nodes.filter((n) => n.baseUrl !== '/local_node')
-)
+const remoteNodeList = ref([])
+const remoteNodeLoading = ref(false)
+const remoteNodeDialogVisible = ref(false)
+const editingRemoteNodeId = ref(null)
+const remoteNodeSaving = ref(false)
+const testingNodeId = ref(null)
 
-const hasRemoteNodes = computed(() => remoteNodes.value.length > 0)
+const remoteNodeForm = reactive({
+  name: '',
+  url: '',
+  username: 'admin',
+  password: '',
+  verify_ssl: true,
+  enabled: true
+})
+
+const remoteNodeErrors = reactive({})
+
+const isEditingRemoteNode = computed(() => editingRemoteNodeId.value !== null)
+
+async function loadRemoteNodes() {
+  remoteNodeLoading.value = true
+  try {
+    remoteNodeList.value = await listRemoteNodes()
+  } catch (e) {
+    toast.error('加载远程节点失败', e.response?.data?.detail || e.message)
+  } finally {
+    remoteNodeLoading.value = false
+  }
+}
 
 function openAddRemote() {
   editingNode.value = null
@@ -156,42 +180,10 @@ function setActive(node) {
   toast.success(`已切换到节点：${node.name}`)
 }
 
-// ===== 远程下载节点（服务端配置，供下载插件推送文件到远程 eta_node）=====
-const remoteNodeList = ref([])
-const remoteNodeLoading = ref(false)
-const remoteNodeDialogVisible = ref(false)
-const editingRemoteNodeId = ref(null)
-const remoteNodeSaving = ref(false)
-const testingNodeId = ref(null)
-
-const remoteNodeForm = reactive({
-  name: '',
-  url: '',
-  username: 'admin',
-  password: '',
-  verify_ssl: true,
-  enabled: true
-})
-
-const remoteNodeErrors = reactive({})
-
-const isEditingRemoteNode = computed(() => editingRemoteNodeId.value !== null)
-
-async function loadRemoteNodes() {
-  remoteNodeLoading.value = true
-  try {
-    remoteNodeList.value = await listRemoteNodes()
-  } catch (e) {
-    toast.error('加载远程下载节点失败', e.response?.data?.detail || e.message)
-  } finally {
-    remoteNodeLoading.value = false
-  }
-}
-
 function openAddRemoteNode() {
   editingRemoteNodeId.value = null
   remoteNodeForm.name = ''
-  remoteNodeForm.url = 'http://127.0.0.1:8000'
+  remoteNodeForm.url = 'http://127.0.0.1:8001'
   remoteNodeForm.username = 'admin'
   remoteNodeForm.password = ''
   remoteNodeForm.verify_ssl = true
@@ -217,7 +209,7 @@ function validateRemoteNode() {
   if (!remoteNodeForm.name) remoteNodeErrors.name = '请输入节点名称'
   if (!remoteNodeForm.url) remoteNodeErrors.url = '请输入节点 URL'
   else if (!/^https?:\/\/.+/.test(remoteNodeForm.url))
-    remoteNodeErrors.url = '请输入完整 URL（如 http://127.0.0.1:8000）'
+    remoteNodeErrors.url = '请输入完整 URL（如 http://127.0.0.1:8001）'
   if (!remoteNodeForm.username) remoteNodeErrors.username = '请输入用户名'
   return Object.keys(remoteNodeErrors).length === 0
 }
@@ -233,28 +225,27 @@ async function saveRemoteNode() {
       verify_ssl: remoteNodeForm.verify_ssl,
       enabled: remoteNodeForm.enabled
     }
-    // 仅在填写了密码时才提交，避免编辑时清空密码
     if (remoteNodeForm.password) {
       payload.password = remoteNodeForm.password
     }
     if (editingRemoteNodeId.value) {
       await updateRemoteNode(editingRemoteNodeId.value, payload)
-      toast.success('远程下载节点已更新')
+      toast.success('远程节点已更新')
     } else {
       await createRemoteNode(payload)
-      toast.success('远程下载节点已添加')
+      toast.success('远程节点已添加')
     }
     remoteNodeDialogVisible.value = false
     await loadRemoteNodes()
   } catch (e) {
-    toast.error('保存远程下载节点失败', e.response?.data?.detail || e.message)
+    toast.error('保存远程节点失败', e.response?.data?.detail || e.message)
   } finally {
     remoteNodeSaving.value = false
   }
 }
 
 async function confirmDeleteRemoteNode(row) {
-  const ok = await confirm(`确定删除远程下载节点「${row.name}」？`, {
+  const ok = await confirm(`确定删除远程节点「${row.name}」？`, {
     title: '提示',
     type: 'danger'
   })
@@ -264,7 +255,7 @@ async function confirmDeleteRemoteNode(row) {
     toast.success('已删除')
     await loadRemoteNodes()
   } catch (e) {
-    toast.error('删除远程下载节点失败', e.response?.data?.detail || e.message)
+    toast.error('删除远程节点失败', e.response?.data?.detail || e.message)
   }
 }
 
@@ -284,7 +275,66 @@ async function testRemoteNodeConnection(row) {
   }
 }
 
-// 进入页面时再同步一次本地节点状态（确保最新）
+async function loginRemoteNodeAction(row) {
+  loggingId.value = row.id
+  try {
+    const result = await loginRemoteNode(row.id)
+    const nodeData = {
+      id: `remote-${row.id}`,
+      name: row.name,
+      baseUrl: row.url,
+      username: row.username,
+      password: '',
+      token: result.access_token,
+      userInfo: result.user_info
+    }
+    const existing = nodesStore.nodes.find((n) => n.id === nodeData.id)
+    if (existing) {
+      nodesStore.updateNode(nodeData.id, {
+        token: result.access_token,
+        userInfo: result.user_info,
+        name: row.name,
+        baseUrl: row.url
+      })
+    } else {
+      nodesStore.addNode(nodeData)
+      nodesStore.updateNode(nodeData.id, {
+        token: result.access_token,
+        userInfo: result.user_info
+      })
+    }
+    nodesStore.setActive(nodeData.id)
+    nodesStore.authVersion++
+    authStore.restoreFromNode(nodesStore.activeNode)
+    toast.success(`已登录节点：${row.name}`)
+    if (route.query.redirect) {
+      router.replace(route.query.redirect)
+    }
+  } catch (e) {
+    toast.error('登录失败', e.response?.data?.detail || e.message)
+  } finally {
+    loggingId.value = null
+  }
+}
+
+async function activateRemoteNodeAction(row) {
+  try {
+    await activateRemoteNode(row.id)
+    await loadRemoteNodes()
+    toast.success(`已设为当前节点：${row.name}`)
+  } catch (e) {
+    toast.error('设置失败', e.response?.data?.detail || e.message)
+  }
+}
+
+function isRemoteNodeLoggedIn(row) {
+  return !!nodesStore.nodes.find((n) => n.id === `remote-${row.id}`)?.token
+}
+
+function isRemoteNodeActive(row) {
+  return nodesStore.activeNodeId === `remote-${row.id}`
+}
+
 onMounted(() => {
   pluginsStore.syncLocalNode(nodesStore)
   loadRemoteNodes()
@@ -295,13 +345,13 @@ onMounted(() => {
   <div class="flex flex-col gap-6">
     <div class="flex items-center justify-between">
       <h2 class="text-2xl font-bold tracking-tight text-gold-gradient">节点管理</h2>
-      <Button @click="openAddRemote">
+      <Button @click="openAddRemoteNode">
         <Plus class="h-4 w-4" />
         添加远程节点
       </Button>
     </div>
 
-    <!-- 本地节点卡片（仅插件可用时显示） -->
+    <!-- 本地节点卡片 -->
     <div v-if="localNode?.available" class="rounded-lg border border-primary/30 bg-card shadow-sm overflow-hidden">
       <div class="flex items-center gap-3 border-b border-border bg-primary/5 px-4 py-2.5">
         <HardDrive class="h-4 w-4 text-primary" />
@@ -309,7 +359,6 @@ onMounted(() => {
         <span class="text-xs text-muted-foreground">由 local_node 插件提供，插件启用即自动连接</span>
       </div>
 
-      <!-- 本地节点已连接（自动） -->
       <div class="flex items-center justify-between gap-4 px-4 py-4">
         <div class="flex items-center gap-4">
           <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
@@ -343,100 +392,12 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 远程节点列表 -->
+    <!-- 远程节点（统一管理） -->
     <div class="flex flex-col gap-3">
       <div class="flex items-center gap-2">
         <Server class="h-4 w-4 text-muted-foreground" />
         <span class="text-sm font-medium text-muted-foreground">远程节点</span>
       </div>
-
-      <Alert v-if="!hasRemoteNodes" class="border-border">
-        <AlertDescription class="text-muted-foreground">
-          尚未配置远程节点。点击右上角『添加远程节点』连接其他主机。
-        </AlertDescription>
-      </Alert>
-
-      <div v-if="hasRemoteNodes" class="rounded-lg border bg-card shadow-sm">
-        <Table>
-          <TableHeader>
-            <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[64px]"></TableHead>
-              <TableHead>名称</TableHead>
-              <TableHead>Base URL</TableHead>
-              <TableHead class="w-[120px]">用户名</TableHead>
-              <TableHead class="w-[120px]">登录状态</TableHead>
-              <TableHead class="w-[320px]">操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableRow v-for="row in remoteNodes" :key="row.id">
-              <TableCell>
-                <Badge v-if="row.id === nodesStore.activeNodeId" variant="success">当前</Badge>
-              </TableCell>
-              <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
-              <TableCell class="text-muted-foreground">{{ row.baseUrl }}</TableCell>
-              <TableCell class="text-muted-foreground">{{ row.username }}</TableCell>
-              <TableCell>
-                <Badge v-if="row.token" variant="success">已登录</Badge>
-                <Badge v-else variant="secondary">未登录</Badge>
-              </TableCell>
-              <TableCell>
-                <div class="flex flex-wrap items-center gap-1">
-                  <Button
-                    v-if="row.token"
-                    variant="ghost"
-                    size="sm"
-                    :disabled="row.id === nodesStore.activeNodeId"
-                    @click="setActive(row)"
-                  >
-                    设为当前
-                  </Button>
-                  <Button
-                    v-else
-                    variant="ghost"
-                    size="sm"
-                    :disabled="loggingId === row.id"
-                    @click="onLogin(row)"
-                  >
-                    <Loader2 v-if="loggingId === row.id" class="h-4 w-4 animate-spin" />
-                    登录
-                  </Button>
-                  <Button v-if="row.token" variant="ghost" size="sm" @click="onLogout(row)">
-                    登出
-                  </Button>
-                  <Button variant="ghost" size="sm" @click="openEdit(row)">编辑</Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="text-destructive hover:text-destructive"
-                    @click="onDelete(row)"
-                  >
-                    删除
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-
-    <!-- 远程下载节点（服务端配置，供下载插件推送文件到远程 eta_node）-->
-    <div class="flex flex-col gap-3">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <Plug class="h-4 w-4 text-muted-foreground" />
-          <span class="text-sm font-medium text-muted-foreground">远程下载节点</span>
-        </div>
-        <Button size="sm" @click="openAddRemoteNode">
-          <Plus class="h-4 w-4" />
-          添加下载节点
-        </Button>
-      </div>
-
-      <p class="text-xs text-muted-foreground">
-        下载插件通过这些节点将文件推送到远程 eta_node 实例的 watch_dir。此处的配置保存在访问端服务端，与上方的客户端节点连接相互独立。
-      </p>
 
       <div v-if="remoteNodeLoading" class="flex items-center gap-2 py-4 text-muted-foreground">
         <Loader2 class="h-4 w-4 animate-spin" />
@@ -445,7 +406,7 @@ onMounted(() => {
 
       <Alert v-if="!remoteNodeLoading && remoteNodeList.length === 0" class="border-border">
         <AlertDescription class="text-muted-foreground">
-          尚未配置远程下载节点。点击右上角『添加下载节点』配置远程 eta_node 实例。
+          尚未配置远程节点。点击右上角『添加远程节点』连接其他主机。
         </AlertDescription>
       </Alert>
 
@@ -453,15 +414,20 @@ onMounted(() => {
         <Table>
           <TableHeader>
             <TableRow class="hover:bg-transparent">
+              <TableHead class="w-[64px]"></TableHead>
               <TableHead>名称</TableHead>
               <TableHead>URL</TableHead>
-              <TableHead class="w-[120px]">用户名</TableHead>
-              <TableHead class="w-[100px]">状态</TableHead>
-              <TableHead class="w-[280px]">操作</TableHead>
+              <TableHead class="w-[100px]">用户名</TableHead>
+              <TableHead class="w-[80px]">状态</TableHead>
+              <TableHead class="w-[80px]">登录</TableHead>
+              <TableHead class="w-[320px]">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             <TableRow v-for="row in remoteNodeList" :key="row.id">
+              <TableCell>
+                <Badge v-if="isRemoteNodeActive(row)" variant="success">当前</Badge>
+              </TableCell>
               <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.url }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.username }}</TableCell>
@@ -470,7 +436,40 @@ onMounted(() => {
                 <Badge v-else variant="secondary">禁用</Badge>
               </TableCell>
               <TableCell>
+                <Badge v-if="isRemoteNodeLoggedIn(row)" variant="success">已登录</Badge>
+                <Badge v-else variant="secondary">未登录</Badge>
+              </TableCell>
+              <TableCell>
                 <div class="flex flex-wrap items-center gap-1">
+                  <Button
+                    v-if="isRemoteNodeLoggedIn(row) && !isRemoteNodeActive(row)"
+                    variant="ghost"
+                    size="sm"
+                    @click="activateRemoteNodeAction(row)"
+                  >
+                    <Star class="h-4 w-4" />
+                    设为当前
+                  </Button>
+                  <Button
+                    v-if="!isRemoteNodeLoggedIn(row)"
+                    variant="ghost"
+                    size="sm"
+                    :disabled="loggingId === row.id"
+                    @click="loginRemoteNodeAction(row)"
+                  >
+                    <Loader2 v-if="loggingId === row.id" class="h-4 w-4 animate-spin" />
+                    <LogIn v-else class="h-4 w-4" />
+                    登录
+                  </Button>
+                  <Button
+                    v-if="isRemoteNodeLoggedIn(row)"
+                    variant="ghost"
+                    size="sm"
+                    @click="onLogout(nodesStore.nodes.find((n) => n.id === `remote-${row.id}`))"
+                  >
+                    <LogOut class="h-4 w-4" />
+                    登出
+                  </Button>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -502,15 +501,15 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 远程下载节点编辑对话框 -->
+    <!-- 远程节点编辑对话框 -->
     <Dialog :open="remoteNodeDialogVisible" @update:open="(v) => !v && (remoteNodeDialogVisible = false)">
       <DialogContent class="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {{ isEditingRemoteNode ? '编辑远程下载节点' : '添加远程下载节点' }}
+            {{ isEditingRemoteNode ? '编辑远程节点' : '添加远程节点' }}
           </DialogTitle>
           <DialogDescription>
-            配置远程 eta_node 实例的连接信息，下载插件会将文件推送到该节点。
+            配置远程 eta_node 实例的连接信息。节点可用于浏览曲库和下载推送。
           </DialogDescription>
         </DialogHeader>
 
@@ -531,7 +530,7 @@ onMounted(() => {
             <Input
               id="rn-url"
               v-model="remoteNodeForm.url"
-              placeholder="http://127.0.0.1:8000"
+              placeholder="http://127.0.0.1:8001"
               class="bg-secondary/60"
             />
             <p v-if="remoteNodeErrors.url" class="text-xs text-destructive">{{ remoteNodeErrors.url }}</p>

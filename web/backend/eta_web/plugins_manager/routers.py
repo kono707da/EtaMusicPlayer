@@ -446,6 +446,7 @@ def list_remote_nodes(db: Session = Depends(get_db)) -> list[dict]:
             "username": r.username,
             "verify_ssl": r.verify_ssl,
             "enabled": r.enabled,
+            "is_active": r.is_active,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
         }
@@ -469,6 +470,7 @@ class RemoteNodeUpdate(BaseModel):
     password: str | None = None
     verify_ssl: bool | None = None
     enabled: bool | None = None
+    is_active: bool | None = None
 
 
 @router.post("/remote-nodes", status_code=201)
@@ -499,6 +501,7 @@ def create_remote_node(
         "username": node.username,
         "verify_ssl": node.verify_ssl,
         "enabled": node.enabled,
+        "is_active": node.is_active,
         "message": f"远程节点 '{node.name}' 已创建",
     }
 
@@ -530,6 +533,12 @@ def update_remote_node(
         node.verify_ssl = payload.verify_ssl
     if payload.enabled is not None:
         node.enabled = payload.enabled
+    if payload.is_active is not None:
+        if payload.is_active:
+            db.query(RemoteNode).filter(RemoteNode.is_active.is_(True)).update(
+                {"is_active": False}
+            )
+        node.is_active = payload.is_active
     db.commit()
     return {"message": f"远程节点 '{node.name}' 已更新"}
 
@@ -567,3 +576,58 @@ def test_remote_node(node_id: int, db: Session = Depends(get_db)) -> dict:
         }
     except Exception as e:
         return {"success": False, "message": f"连接失败：{e}"}
+
+
+@router.post("/remote-nodes/{node_id}/login")
+def login_remote_node(node_id: int, db: Session = Depends(get_db)) -> dict:
+    """登录远程节点，返回 access_token 和 user_info
+
+    前端工作台用此接口获取 token 后浏览远程节点的曲库。
+    """
+    node = db.get(RemoteNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="远程节点不存在")
+    try:
+        import requests as _requests
+
+        resp = _requests.post(
+            f"{node.url.rstrip('/')}/api/auth/login",
+            json={"username": node.username, "password": node.password},
+            verify=node.verify_ssl,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=f"远程节点认证失败：{resp.text[:200]}",
+            )
+        data = resp.json()
+        token = data.get("access_token") or data.get("token")
+        if not token:
+            raise HTTPException(status_code=401, detail="远程节点未返回 token")
+        user_info = data.get("user") or data.get("userInfo") or {}
+        return {
+            "access_token": token,
+            "user_info": user_info,
+            "node_id": node.id,
+            "node_name": node.name,
+            "url": node.url,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"连接远程节点失败：{e}")
+
+
+@router.post("/remote-nodes/{node_id}/activate")
+def activate_remote_node(node_id: int, db: Session = Depends(get_db)) -> dict:
+    """将指定远程节点设为当前活跃节点（同时取消其他节点的活跃状态）"""
+    node = db.get(RemoteNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="远程节点不存在")
+    db.query(RemoteNode).filter(RemoteNode.is_active.is_(True)).update(
+        {"is_active": False}
+    )
+    node.is_active = True
+    db.commit()
+    return {"message": f"已切换到节点：{node.name}", "active_node_id": node.id}

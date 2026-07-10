@@ -38,8 +38,8 @@ class Plugin(Base):
 class RemoteNode(Base):
     """远程节点配置
 
-    下载插件可通过此配置连接远程 eta_node 实例，
-    将下载的文件推送到远程节点的 watch_dir。
+    统一管理远程 eta_node 实例的连接信息。
+    前端工作台浏览曲库和下载插件推送文件共用同一套节点配置。
     """
 
     __tablename__ = "remote_nodes"
@@ -51,6 +51,7 @@ class RemoteNode(Base):
     password: Mapped[str] = mapped_column(String(256), default="", nullable=False)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False
