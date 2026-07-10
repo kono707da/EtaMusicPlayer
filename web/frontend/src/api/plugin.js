@@ -122,3 +122,15 @@ export async function testRemoteNode(id) {
   const resp = await client.post(`/api/plugins/remote-nodes/${id}/test`, null, { timeout: 30000 })
   return resp.data
 }
+
+// 登录远程节点（获取 access_token 和 user_info）
+export async function loginRemoteNode(id) {
+  const resp = await client.post(`/api/plugins/remote-nodes/${id}/login`, null, { timeout: 15000 })
+  return resp.data
+}
+
+// 将远程节点设为当前活跃节点
+export async function activateRemoteNode(id) {
+  const resp = await client.post(`/api/plugins/remote-nodes/${id}/activate`)
+  return resp.data
+}
