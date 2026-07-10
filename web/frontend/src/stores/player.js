@@ -3,9 +3,20 @@ import { ref, computed } from 'vue'
 import { Howl } from 'howler'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useNodesStore } from './nodes'
-import { getStreamUrl } from '../api/node'
+import { getStreamUrl, reportPlayEvent } from '../api/node'
 
 const toast = useToast()
+
+/**
+ * 上报播放事件到节点（静默失败，不阻塞播放）
+ */
+function _reportPlay(nodeId, trackId, eventType) {
+  const nodesStore = useNodesStore()
+  const node = nodesStore.nodes.find((n) => n.id === nodeId)
+  if (!node || !node.token) return
+  reportPlayEvent(node, { track_id: trackId, event_type: eventType })
+    .catch(() => { /* 静默失败 */ })
+}
 
 /**
  * 播放器状态
@@ -61,11 +72,15 @@ export const usePlayerStore = defineStore('player', () => {
       },
       onplay() {
         isPlaying.value = true
+        // 上报 play 事件
+        _reportPlay(current.value.nodeId, current.value.track.id, 'play')
       },
       onpause() {
         isPlaying.value = false
       },
       onend() {
+        // 上报 complete 事件
+        _reportPlay(current.value.nodeId, current.value.track.id, 'complete')
         next()
       },
       onloaderror() {
@@ -120,6 +135,10 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function next() {
+    // 如果当前曲目正在播放（非自然结束），上报 skip 事件
+    if (current.value && isPlaying.value) {
+      _reportPlay(current.value.nodeId, current.value.track.id, 'skip')
+    }
     if (currentIndex.value < queue.value.length - 1) {
       currentIndex.value++
       loadCurrent()
@@ -130,6 +149,9 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function prev() {
+    if (current.value && isPlaying.value) {
+      _reportPlay(current.value.nodeId, current.value.track.id, 'skip')
+    }
     if (currentIndex.value > 0) {
       currentIndex.value--
       loadCurrent()

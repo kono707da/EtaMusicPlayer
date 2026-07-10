@@ -395,3 +395,76 @@ export async function getUserGrantedPlaylists(node, userId) {
   const resp = await client.get(`/api/users/${userId}/playlists`)
   return resp.data
 }
+
+// ============ 任务队列 ============
+
+// 提交任务
+// payload: {task_type, priority?, payload?}
+export async function submitTask(node, payload) {
+  const client = createNodeClient(node)
+  const resp = await client.post('/api/tasks', payload)
+  return resp.data
+}
+
+// 查询任务状态
+export async function getTask(node, taskId) {
+  const client = createNodeClient(node)
+  const resp = await client.get(`/api/tasks/${taskId}`)
+  return resp.data
+}
+
+// 列出任务（分页 + 过滤）
+// params: {status?, task_type?, page?, size?}
+export async function listTasks(node, params = {}) {
+  const client = createNodeClient(node)
+  const resp = await client.get('/api/tasks', { params })
+  return resp.data
+}
+
+// 取消 pending 任务
+export async function cancelTask(node, taskId) {
+  const client = createNodeClient(node)
+  const resp = await client.post(`/api/tasks/${taskId}/cancel`)
+  return resp.data
+}
+
+// ============ 文件暂存 ============
+
+// 暂存文件到节点临时目录，返回 {staging_path, filename, size}
+export async function stageFile(node, file) {
+  const client = createNodeClient(node)
+  const form = new FormData()
+  form.append('file', file)
+  const resp = await client.post('/api/upload/stage', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  })
+  return resp.data
+}
+
+// ============ 审计日志 ============
+
+// 查询审计日志（分页 + 过滤）
+// params: {action?, username?, target_type?, start_date?, end_date?, page?, size?}
+export async function getAuditLogs(node, params = {}) {
+  const client = createNodeClient(node)
+  const resp = await client.get('/api/audit/logs', { params })
+  return resp.data
+}
+
+// ============ 播放统计与看板 ============
+
+// 上报播放事件
+// payload: {track_id, event_type}  event_type: "play"|"skip"|"complete"
+export async function reportPlayEvent(node, payload) {
+  const client = createNodeClient(node)
+  const resp = await client.post('/api/stats/play', payload)
+  return resp.data
+}
+
+// 获取数据看板
+export async function getDashboard(node) {
+  const client = createNodeClient(node)
+  const resp = await client.get('/api/stats/dashboard')
+  return resp.data
+}

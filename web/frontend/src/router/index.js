@@ -65,6 +65,24 @@ const routes = [
     meta: { requiresAdmin: true }
   },
   {
+    path: '/admin/tasks',
+    name: 'admin-tasks',
+    component: () => import('../views/TasksView.vue'),
+    meta: { requiresAdmin: true }
+  },
+  {
+    path: '/admin/audit',
+    name: 'admin-audit',
+    component: () => import('../views/AuditLogView.vue'),
+    meta: { requiresAdmin: true }
+  },
+  {
+    path: '/admin/dashboard',
+    name: 'admin-dashboard',
+    component: () => import('../views/DashboardView.vue'),
+    meta: { requiresAdmin: true }
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/library'
   }

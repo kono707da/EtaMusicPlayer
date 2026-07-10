@@ -3,7 +3,8 @@ import { ref, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   Search, User, Library, ListMusic, Settings, RefreshCw,
-  Wand2, Copy, TrendingUp, Network, Users, LogOut, ChevronDown, ChevronRight, Package
+  Wand2, Copy, TrendingUp, Network, Users, LogOut, ChevronDown, ChevronRight, Package,
+  ListChecks, ScrollText, BarChart3
 } from 'lucide-vue-next'
 import PlaylistTree from './components/PlaylistTree.vue'
 import PlayerBar from './components/PlayerBar.vue'
@@ -82,12 +83,15 @@ function toggleGroup(item) {
 
 // 管理功能
 const adminNavItems = [
+  { path: '/admin/dashboard', label: '数据看板', icon: BarChart3 },
   { path: '/admin/scan', label: '扫描管理', icon: RefreshCw },
   { path: '/admin/metadata', label: '元数据编辑', icon: Wand2 },
   { path: '/admin/dedup', label: '去重检测', icon: Copy },
   { path: '/admin/quality', label: '音质升级', icon: TrendingUp },
   { path: '/admin/permissions', label: '播放列表授权', icon: Network },
-  { path: '/admin/users', label: '用户管理', icon: Users }
+  { path: '/admin/users', label: '用户管理', icon: Users },
+  { path: '/admin/tasks', label: '任务管理', icon: ListChecks },
+  { path: '/admin/audit', label: '审计日志', icon: ScrollText }
 ]
 
 const currentPath = computed(() => route.path)

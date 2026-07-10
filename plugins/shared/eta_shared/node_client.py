@@ -103,6 +103,39 @@ class NodeClient:
         """上报播放事件 (play/skip/complete)"""
         raise NotImplementedError
 
+    def list_tasks(
+        self,
+        status: Optional[str] = None,
+        task_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> Optional[dict]:
+        """列出任务（分页），返回 {total, page, size, items}"""
+        raise NotImplementedError
+
+    def cancel_task(self, task_id: int) -> bool:
+        """取消 pending 任务"""
+        raise NotImplementedError
+
+    def stage_file(self, file_path: Path) -> Optional[dict]:
+        """暂存文件到节点临时目录，返回 {staging_path, filename, size}"""
+        raise NotImplementedError
+
+    def get_audit_logs(
+        self,
+        action: Optional[str] = None,
+        username: Optional[str] = None,
+        target_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> Optional[dict]:
+        """查询审计日志（分页），返回 {total, page, size, items}"""
+        raise NotImplementedError
+
+    def get_dashboard(self) -> Optional[dict]:
+        """获取数据看板"""
+        raise NotImplementedError
+
     def create_playlist(
         self,
         name: str,
@@ -276,6 +309,254 @@ class LocalNodeClient(NodeClient):
             logger.warning("local_node 记录播放事件失败: %s", e)
             db.rollback()
             return False
+        finally:
+            db.close()
+
+    def list_tasks(
+        self,
+        status: Optional[str] = None,
+        task_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> Optional[dict]:
+        """列出任务（本地直查数据库）"""
+        from eta_node.database import SessionLocal
+        from eta_node.models import NodeTask
+
+        db = SessionLocal()
+        try:
+            query = db.query(NodeTask)
+            if status is not None:
+                query = query.filter(NodeTask.status == status)
+            if task_type is not None:
+                query = query.filter(NodeTask.task_type == task_type)
+
+            total = query.count()
+            items = (
+                query.order_by(NodeTask.submitted_at.desc())
+                .offset((page - 1) * size)
+                .limit(size)
+                .all()
+            )
+            return {
+                "total": total,
+                "page": page,
+                "size": size,
+                "items": [
+                    {
+                        "id": t.id,
+                        "task_type": t.task_type,
+                        "status": t.status,
+                        "priority": t.priority,
+                        "payload": t.payload,
+                        "result": t.result,
+                        "error_message": t.error_message,
+                        "progress": t.progress,
+                        "submitted_by": t.submitted_by,
+                        "submitted_at": t.submitted_at.isoformat() if t.submitted_at else None,
+                        "started_at": t.started_at.isoformat() if t.started_at else None,
+                        "finished_at": t.finished_at.isoformat() if t.finished_at else None,
+                    }
+                    for t in items
+                ],
+            }
+        finally:
+            db.close()
+
+    def cancel_task(self, task_id: int) -> bool:
+        """取消 pending 任务（本地直改数据库）"""
+        from datetime import datetime as _dt
+        from eta_node.database import SessionLocal
+        from eta_node.models import NodeTask
+
+        db = SessionLocal()
+        try:
+            task = db.get(NodeTask, task_id)
+            if task is None or task.status != "pending":
+                return False
+            task.status = "cancelled"
+            task.finished_at = _dt.utcnow()
+            db.commit()
+            return True
+        finally:
+            db.close()
+
+    def stage_file(self, file_path: Path) -> Optional[dict]:
+        """暂存文件（本地直接复制到 staging 目录）"""
+        import shutil
+        import uuid
+        from eta_node.config import settings
+
+        src = Path(file_path)
+        if not src.exists():
+            logger.warning("暂存文件不存在: %s", file_path)
+            return None
+
+        staging_dir = settings.staging_absolute_path
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        ext = src.suffix
+        staging_name = f"{uuid.uuid4().hex}{ext}"
+        staging_path = staging_dir / staging_name
+        shutil.copy2(str(src), str(staging_path))
+
+        return {
+            "staging_path": str(staging_path),
+            "filename": src.name,
+            "size": src.stat().st_size,
+        }
+
+    def get_audit_logs(
+        self,
+        action: Optional[str] = None,
+        username: Optional[str] = None,
+        target_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> Optional[dict]:
+        """查询审计日志（本地直查数据库）"""
+        from eta_node.database import SessionLocal
+        from eta_node.models import AuditLog
+
+        db = SessionLocal()
+        try:
+            query = db.query(AuditLog)
+            if action is not None:
+                query = query.filter(AuditLog.action == action)
+            if username is not None:
+                query = query.filter(AuditLog.username == username)
+            if target_type is not None:
+                query = query.filter(AuditLog.target_type == target_type)
+
+            total = query.count()
+            items = (
+                query.order_by(AuditLog.timestamp.desc())
+                .offset((page - 1) * size)
+                .limit(size)
+                .all()
+            )
+            return {
+                "total": total,
+                "page": page,
+                "size": size,
+                "items": [
+                    {
+                        "id": log.id,
+                        "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+                        "user_id": log.user_id,
+                        "username": log.username,
+                        "client_ip": log.client_ip,
+                        "action": log.action,
+                        "target_type": log.target_type,
+                        "target_id": log.target_id,
+                        "detail": log.detail,
+                        "task_id": log.task_id,
+                    }
+                    for log in items
+                ],
+            }
+        finally:
+            db.close()
+
+    def get_dashboard(self) -> Optional[dict]:
+        """获取数据看板（本地直查数据库）"""
+        from datetime import datetime as _dt, timedelta
+        from sqlalchemy import func
+        from eta_node.database import SessionLocal
+        from eta_node.models import (
+            PlayHistory, Track, TrackStats, User, UserPlayStats,
+        )
+
+        db = SessionLocal()
+        try:
+            now = _dt.utcnow()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_ago = now - timedelta(days=7)
+
+            total_tracks = db.query(func.count(Track.id)).scalar() or 0
+            total_play = db.query(func.sum(TrackStats.total_play_count)).scalar() or 0
+            total_skip = db.query(func.sum(TrackStats.total_skip_count)).scalar() or 0
+            total_complete = db.query(func.sum(TrackStats.total_complete_count)).scalar() or 0
+            imported_today = (
+                db.query(func.count(TrackStats.track_id))
+                .filter(TrackStats.imported_at >= today_start)
+                .scalar() or 0
+            )
+            imported_this_week = (
+                db.query(func.count(TrackStats.track_id))
+                .filter(TrackStats.imported_at >= week_ago)
+                .scalar() or 0
+            )
+
+            top_q = (
+                db.query(
+                    TrackStats.track_id, TrackStats.total_play_count,
+                    TrackStats.total_complete_count, Track.title, Track.artist,
+                )
+                .join(Track, TrackStats.track_id == Track.id)
+                .filter(TrackStats.total_play_count > 0)
+                .order_by(TrackStats.total_play_count.desc())
+                .limit(10)
+                .all()
+            )
+            top_played = [
+                {
+                    "track_id": r.track_id, "title": r.title, "artist": r.artist,
+                    "play_count": r.total_play_count, "complete_count": r.total_complete_count,
+                }
+                for r in top_q
+            ]
+
+            recent_q = (
+                db.query(
+                    PlayHistory.played_at, PlayHistory.track_id,
+                    Track.title, User.username,
+                )
+                .join(Track, PlayHistory.track_id == Track.id)
+                .join(User, PlayHistory.user_id == User.id)
+                .order_by(PlayHistory.played_at.desc())
+                .limit(10)
+                .all()
+            )
+            recent_plays = [
+                {
+                    "played_at": r.played_at.isoformat() if r.played_at else None,
+                    "track_id": r.track_id, "title": r.title, "username": r.username,
+                }
+                for r in recent_q
+            ]
+
+            active_q = (
+                db.query(
+                    User.username,
+                    func.sum(UserPlayStats.play_count).label("plays"),
+                    func.sum(UserPlayStats.complete_count).label("completes"),
+                )
+                .join(UserPlayStats, UserPlayStats.user_id == User.id)
+                .group_by(User.id, User.username)
+                .order_by(func.sum(UserPlayStats.play_count).desc())
+                .limit(5)
+                .all()
+            )
+            active_users = [
+                {
+                    "username": r.username,
+                    "play_count": int(r.plays) if r.plays else 0,
+                    "complete_count": int(r.completes) if r.completes else 0,
+                }
+                for r in active_q
+            ]
+
+            return {
+                "total_tracks": total_tracks,
+                "total_play_count": total_play,
+                "total_skip_count": total_skip,
+                "total_complete_count": total_complete,
+                "tracks_imported_today": imported_today,
+                "tracks_imported_this_week": imported_this_week,
+                "top_played_tracks": top_played,
+                "recent_plays": recent_plays,
+                "active_users": active_users,
+            }
         finally:
             db.close()
 
@@ -527,6 +808,78 @@ class RemoteNodeClient(NodeClient):
         except Exception as e:
             logger.warning("远程上报播放事件失败: %s", e)
             return False
+
+    def list_tasks(
+        self,
+        status: Optional[str] = None,
+        task_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 20,
+    ) -> Optional[dict]:
+        """列出任务"""
+        try:
+            params = {"page": page, "size": size}
+            if status is not None:
+                params["status"] = status
+            if task_type is not None:
+                params["task_type"] = task_type
+            resp = self._request("GET", "/api/tasks", params=params)
+            return resp.json()
+        except Exception as e:
+            logger.warning("远程查询任务列表失败: %s", e)
+            return None
+
+    def cancel_task(self, task_id: int) -> bool:
+        """取消 pending 任务"""
+        try:
+            resp = self._request("POST", f"/api/tasks/{task_id}/cancel")
+            return resp.json().get("status") == "cancelled"
+        except Exception as e:
+            logger.warning("远程取消任务失败: %s", e)
+            return False
+
+    def stage_file(self, file_path: Path) -> Optional[dict]:
+        """暂存文件到远程节点"""
+        try:
+            with open(file_path, "rb") as f:
+                files = {"file": (file_path.name, f)}
+                resp = self._request("POST", "/api/upload/stage", files=files)
+            return resp.json()
+        except Exception as e:
+            logger.warning("远程暂存文件失败: %s", e)
+            return None
+
+    def get_audit_logs(
+        self,
+        action: Optional[str] = None,
+        username: Optional[str] = None,
+        target_type: Optional[str] = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> Optional[dict]:
+        """查询审计日志"""
+        try:
+            params = {"page": page, "size": size}
+            if action is not None:
+                params["action"] = action
+            if username is not None:
+                params["username"] = username
+            if target_type is not None:
+                params["target_type"] = target_type
+            resp = self._request("GET", "/api/audit/logs", params=params)
+            return resp.json()
+        except Exception as e:
+            logger.warning("远程查询审计日志失败: %s", e)
+            return None
+
+    def get_dashboard(self) -> Optional[dict]:
+        """获取数据看板"""
+        try:
+            resp = self._request("GET", "/api/stats/dashboard")
+            return resp.json()
+        except Exception as e:
+            logger.warning("远程获取数据看板失败: %s", e)
+            return None
 
     def find_tracks_by_paths(self, paths: list[str]) -> list[int]:
         try:
