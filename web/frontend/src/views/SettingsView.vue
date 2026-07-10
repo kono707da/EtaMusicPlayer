@@ -8,9 +8,10 @@ import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Save, Loader2, Settings, Headphones, Music } from 'lucide-vue-next'
+import { Save, Loader2, Settings, Headphones, Music, RefreshCw, Download, ScrollText } from 'lucide-vue-next'
 import { usePluginsStore } from '../stores/plugins'
 import { useNodesStore } from '../stores/nodes'
+import { getSystemLogs } from '../api/plugin'
 
 // 插件 API 采用动态 import：插件未启用时不会加载其模块代码
 const toast = useToast()
@@ -60,6 +61,63 @@ async function saveSystemSettings() {
   } finally {
     systemSaving.value = false
   }
+}
+
+// ============ 系统日志 ============
+const logLevel = ref('ERROR')
+const logLines = ref(500)
+const logText = ref('')
+const logLoading = ref(false)
+const logMeta = ref({ file_path: '', file_size: 0, exists: false, total_returned: 0 })
+
+function lineClass(line) {
+  if (/\[ERROR\]/.test(line) || /\[CRITICAL\]/.test(line)) return 'log-err'
+  if (/\[WARNING\]/.test(line)) return 'log-warn'
+  if (/\[INFO\]/.test(line)) return 'log-info'
+  return 'log-other'
+}
+
+async function loadLogs() {
+  logLoading.value = true
+  try {
+    const data = await getSystemLogs({ lines: logLines.value, level: logLevel.value })
+    logText.value = (data.lines || []).join('\n')
+    logMeta.value = {
+      file_path: data.file_path || '',
+      file_size: data.file_size || 0,
+      exists: data.exists !== false,
+      total_returned: data.total_returned || 0
+    }
+  } catch (e) {
+    logText.value = ''
+    toast.error('加载日志失败', e?.response?.data?.detail || e.message)
+  } finally {
+    logLoading.value = false
+  }
+}
+
+function downloadLogs() {
+  if (!logText.value) {
+    toast.error('日志为空', '没有可下载的内容')
+    return
+  }
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const blob = new Blob([logText.value], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `eta_web_${logLevel.value}_${stamp}.log`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
 // ============ ASMR 设置 ============
@@ -165,6 +223,7 @@ async function saveBiliSettings() {
 // ============ 初始化 ============
 onMounted(() => {
   loadSystemSettings()
+  loadLogs()
   if (pluginsStore.enabledNames.includes('asmr_one')) loadAsmrSettings()
   if (pluginsStore.enabledNames.includes('bili_audio')) loadBiliSettings()
 })
@@ -191,7 +250,8 @@ onMounted(() => {
     </div>
 
     <!-- 系统设置 -->
-    <div v-show="activeTab === 'system'" class="max-w-xl space-y-4">
+    <div v-show="activeTab === 'system'" class="space-y-4">
+      <div class="max-w-xl space-y-4">
       <Card class="border-border bg-card/40">
         <CardHeader>
           <CardTitle class="text-base">播放器</CardTitle>
@@ -230,6 +290,79 @@ onMounted(() => {
           保存
         </Button>
       </div>
+      </div>
+
+      <!-- 日志查看 -->
+      <Card class="border-border bg-card/40">
+        <CardHeader>
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <CardTitle class="text-base flex items-center gap-2">
+              <ScrollText class="h-4 w-4" />
+              日志查看
+            </CardTitle>
+            <div class="flex items-center gap-2 flex-wrap">
+              <Select :model-value="logLevel" @update:model-value="(v) => { logLevel = v; loadLogs() }">
+                <SelectTrigger class="w-[140px] h-8">
+                  <SelectValue placeholder="级别" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">全部</SelectItem>
+                  <SelectItem value="DEBUG">DEBUG+</SelectItem>
+                  <SelectItem value="INFO">INFO+</SelectItem>
+                  <SelectItem value="WARNING">WARNING+</SelectItem>
+                  <SelectItem value="ERROR">ERROR+</SelectItem>
+                  <SelectItem value="CRITICAL">CRITICAL</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select :model-value="String(logLines)" @update:model-value="(v) => { logLines = Number(v); loadLogs() }">
+                <SelectTrigger class="w-[110px] h-8">
+                  <SelectValue placeholder="行数" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="100">100 行</SelectItem>
+                  <SelectItem value="500">500 行</SelectItem>
+                  <SelectItem value="1000">1000 行</SelectItem>
+                  <SelectItem value="2000">2000 行</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="sm" :disabled="logLoading" @click="loadLogs">
+                <Loader2 v-if="logLoading" class="h-4 w-4 animate-spin" />
+                <RefreshCw v-else class="h-4 w-4" />
+                刷新
+              </Button>
+              <Button variant="outline" size="sm" :disabled="logLoading || !logText" @click="downloadLogs">
+                <Download class="h-4 w-4" />
+                下载
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between text-xs text-muted-foreground flex-wrap gap-2">
+              <span>文件：{{ logMeta.file_path || '未生成' }}</span>
+              <span>
+                共 {{ logMeta.total_returned }} 行 ·
+                大小 {{ formatSize(logMeta.file_size) }}
+                <span v-if="!logMeta.exists" class="text-destructive">（文件不存在）</span>
+              </span>
+            </div>
+            <div class="log-view">
+              <pre v-if="logText" class="log-pre"><code><template v-for="(line, i) in logText.split('\n')" :key="i"><span :class="lineClass(line)">{{ line }}
+</span></template></code></pre>
+              <div v-else-if="logLoading" class="flex items-center justify-center py-8 text-muted-foreground">
+                <Loader2 class="mr-2 h-4 w-4 animate-spin" /> 加载中...
+              </div>
+              <div v-else class="flex items-center justify-center py-8 text-muted-foreground text-sm">
+                无日志记录
+              </div>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              用于排查后端报错（如加载远程节点失败 500 等）。默认显示 ERROR 及以上级别，切换级别可查看更多。
+            </p>
+          </div>
+        </CardContent>
+      </Card>
     </div>
 
     <!-- ASMR 设置（插件未启用时不渲染） -->

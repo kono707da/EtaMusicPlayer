@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -33,6 +34,8 @@ from eta_web.plugins_manager.manager import (
 from eta_web.plugins_manager.online import registry as online_registry
 from eta_web.plugins_manager.installer import install_plugin, update_plugin
 from eta_web import __version__ as ETA_WEB_VERSION
+
+logger = logging.getLogger("eta_web.plugins")
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
@@ -437,21 +440,28 @@ def _get_remote_nodes_config(db: Session) -> list[dict]:
 @router.get("/remote-nodes")
 def list_remote_nodes(db: Session = Depends(get_db)) -> list[dict]:
     """列出所有远程节点配置"""
-    rows = db.query(RemoteNode).order_by(RemoteNode.id).all()
-    return [
-        {
-            "id": r.id,
-            "name": r.name,
-            "url": r.url,
-            "username": r.username,
-            "verify_ssl": r.verify_ssl,
-            "enabled": r.enabled,
-            "is_active": r.is_active,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
-        }
-        for r in rows
-    ]
+    try:
+        rows = db.query(RemoteNode).order_by(RemoteNode.id).all()
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "url": r.url,
+                "username": r.username,
+                "verify_ssl": r.verify_ssl,
+                "enabled": r.enabled,
+                "is_active": r.is_active,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+            }
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.exception("加载远程节点列表失败")
+        raise HTTPException(
+            status_code=500,
+            detail=f"加载远程节点列表失败：{exc.__class__.__name__}: {exc}",
+        )
 
 
 class RemoteNodeCreate(BaseModel):

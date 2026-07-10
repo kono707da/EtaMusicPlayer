@@ -134,3 +134,16 @@ export async function activateRemoteNode(id) {
   const resp = await client.post(`/api/plugins/remote-nodes/${id}/activate`)
   return resp.data
 }
+
+// ===== 系统日志 =====
+
+// 获取后端日志（最近 N 行，支持级别过滤）
+// params: { lines?: number, level?: 'ALL'|'DEBUG'|'INFO'|'WARNING'|'ERROR'|'CRITICAL' }
+export async function getSystemLogs(params = {}) {
+  const query = {
+    lines: params.lines ?? 500,
+    level: params.level ?? 'ALL'
+  }
+  const resp = await client.get('/api/system/logs', { params: query, timeout: 15000 })
+  return resp.data
+}
