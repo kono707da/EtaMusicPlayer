@@ -8,13 +8,6 @@ import { getStreamUrl, reportPlayEvent } from '../api/node'
 const toast = useToast()
 
 /**
- * 读取自动播放下一首设置（持久化在 localStorage）
- */
-function _autoPlayNext() {
-  return localStorage.getItem('etamusic_auto_play_next') !== 'false'
-}
-
-/**
  * 上报播放事件到节点（静默失败，不阻塞播放）
  */
 function _reportPlay(nodeId, trackId, eventType) {
@@ -96,15 +89,10 @@ export const usePlayerStore = defineStore('player', () => {
       onend() {
         // 上报 complete 事件
         _reportPlay(current.value.nodeId, current.value.track.id, 'complete')
-        // 根据设置决定是否自动播放下一首
-        if (_autoPlayNext()) {
-          // 自动推进不报 skip 事件（非用户主动跳过）
-          if (currentIndex.value < queue.value.length - 1) {
-            currentIndex.value++
-            loadCurrent()
-          } else {
-            isPlaying.value = false
-          }
+        // 自动播放下一首
+        if (currentIndex.value < queue.value.length - 1) {
+          currentIndex.value++
+          loadCurrent()
         } else {
           isPlaying.value = false
         }
