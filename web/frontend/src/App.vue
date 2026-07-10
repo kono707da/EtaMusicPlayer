@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   Search, User, Library, ListMusic, Settings, RefreshCw,
@@ -20,6 +20,7 @@ import { useNodesStore } from './stores/nodes'
 import { useAuthStore } from './stores/auth'
 import { useLibraryStore } from './stores/library'
 import { usePluginsStore } from './stores/plugins'
+import { listRemoteNodes, loginRemoteNode } from './api/plugin'
 import { getPluginNavItems } from './plugins'
 
 const router = useRouter()
@@ -141,6 +142,51 @@ watch(
   },
   { immediate: true }
 )
+
+// 启动时自动刷新远程节点 token（后端重启后 token 可能失效）
+onMounted(async () => {
+  await pluginsStore.load()
+  await pluginsStore.syncLocalNode(nodesStore)
+  refreshRemoteTokens()
+})
+
+async function refreshRemoteTokens() {
+  try {
+    const remoteNodes = await listRemoteNodes()
+    await Promise.allSettled(
+      remoteNodes.map(async (row) => {
+        try {
+          const result = await loginRemoteNode(row.id)
+          // 用 baseUrl 匹配更新 store 中的节点 token
+          const existing = nodesStore.nodes.find((n) => n.baseUrl === row.url)
+          if (existing) {
+            nodesStore.updateNode(existing.id, {
+              token: result.access_token,
+              userInfo: result.user_info,
+              name: row.name,
+              baseUrl: row.url
+            })
+          }
+        } catch (e) {
+          // 401/403 表示认证失败，清除旧 token
+          const status = e.response?.status
+          if (status === 401 || status === 403) {
+            const existing = nodesStore.nodes.find((n) => n.baseUrl === row.url)
+            if (existing && existing.token) {
+              nodesStore.updateNode(existing.id, { token: '', userInfo: null })
+            }
+          }
+          // 其他错误（网络问题等）保留旧 token
+        }
+      })
+    )
+    nodesStore.authVersion++
+    authStore.restoreFromNode(nodesStore.activeNode)
+  } catch (e) {
+    // 获取远程节点列表失败，静默处理
+    console.error('刷新远程节点 token 失败:', e)
+  }
+}
 </script>
 
 <template>

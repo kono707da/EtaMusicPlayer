@@ -2,6 +2,24 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useNodesStore } from '../stores/nodes'
 import { useAuthStore } from '../stores/auth'
 
+/**
+ * 包裹动态 import：chunk 加载失败时（通常是部署后旧 hash 失效）自动刷新一次
+ * 用 sessionStorage 防止无限刷新循环
+ */
+function lazy(loader) {
+  return () =>
+    loader().catch((err) => {
+      const key = 'chunk-reloaded'
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, '1')
+        window.location.reload()
+        return new Promise(() => {})
+      }
+      sessionStorage.removeItem(key)
+      throw err
+    })
+}
+
 const routes = [
   {
     path: '/',
@@ -10,81 +28,81 @@ const routes = [
   {
     path: '/library',
     name: 'library',
-    component: () => import('../views/LibraryView.vue')
+    component: lazy(() => import('../views/LibraryView.vue'))
   },
   {
     path: '/playlists',
     name: 'playlists',
-    component: () => import('../views/PlaylistsView.vue')
+    component: lazy(() => import('../views/PlaylistsView.vue'))
   },
   {
     path: '/nodes',
     name: 'nodes',
-    component: () => import('../views/NodesView.vue')
+    component: lazy(() => import('../views/NodesView.vue'))
   },
   {
     path: '/plugins',
     name: 'plugins',
-    component: () => import('../views/PluginsView.vue')
+    component: lazy(() => import('../views/PluginsView.vue'))
   },
   {
     path: '/settings',
     name: 'settings',
-    component: () => import('../views/SettingsView.vue')
+    component: lazy(() => import('../views/SettingsView.vue'))
   },
   // 管理功能路由（需要当前激活节点管理员权限）
   {
     path: '/admin/scan',
     name: 'admin-scan',
-    component: () => import('../views/ScanView.vue'),
+    component: lazy(() => import('../views/ScanView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/metadata',
     name: 'admin-metadata',
-    component: () => import('../views/MetadataView.vue'),
+    component: lazy(() => import('../views/MetadataView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/dedup',
     name: 'admin-dedup',
-    component: () => import('../views/DedupView.vue'),
+    component: lazy(() => import('../views/DedupView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/quality',
     name: 'admin-quality',
-    component: () => import('../views/QualityView.vue'),
+    component: lazy(() => import('../views/QualityView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/permissions',
     name: 'admin-permissions',
-    component: () => import('../views/PermissionsView.vue'),
+    component: lazy(() => import('../views/PermissionsView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/users',
     name: 'admin-users',
-    component: () => import('../views/UsersView.vue'),
+    component: lazy(() => import('../views/UsersView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/tasks',
     name: 'admin-tasks',
-    component: () => import('../views/TasksView.vue'),
+    component: lazy(() => import('../views/TasksView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/audit',
     name: 'admin-audit',
-    component: () => import('../views/AuditLogView.vue'),
+    component: lazy(() => import('../views/AuditLogView.vue')),
     meta: { requiresAdmin: true }
   },
   {
     path: '/admin/dashboard',
     name: 'admin-dashboard',
-    component: () => import('../views/DashboardView.vue'),
+    component: lazy(() => import('../views/DashboardView.vue')),
     meta: { requiresAdmin: true }
   },
   {
