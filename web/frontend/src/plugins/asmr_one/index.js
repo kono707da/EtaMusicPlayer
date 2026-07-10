@@ -2,10 +2,11 @@
  * asmr_one 插件前端 manifest
  *
  * 贡献：
- * - 路由：搜索、作品详情、下载任务、设置、账户、我的评价、我的收藏、热门
+ * - 路由：搜索、作品详情、下载任务、账户、我的评价、我的收藏、热门
  * - 侧边栏导航项（归到一个 ASMR 父项下，可折叠）
+ * - 设置已统一到全局设置页
  */
-import { Headphones, User, Star, Heart, Flame, Download, Settings } from 'lucide-vue-next'
+import { Headphones, User, Star, Heart, Flame, Download } from 'lucide-vue-next'
 
 export default {
   name: 'asmr_one',
@@ -28,12 +29,6 @@ export default {
       name: 'asmr-downloads',
       component: () => import('./views/AsmrDownloadsView.vue'),
       meta: { title: '下载任务' }
-    },
-    {
-      path: '/asmr/settings',
-      name: 'asmr-settings',
-      component: () => import('./views/AsmrSettingsView.vue'),
-      meta: { title: 'ASMR 设置' }
     },
     {
       path: '/asmr/account',
@@ -71,8 +66,7 @@ export default {
         { path: '/asmr/favorites', label: '我的播放列表', icon: Heart },
         { path: '/asmr/reviews', label: '我的评价', icon: Star },
         { path: '/asmr/downloads', label: '下载任务', icon: Download },
-        { path: '/asmr/account', label: '账户', icon: User },
-        { path: '/asmr/settings', label: '设置', icon: Settings }
+        { path: '/asmr/account', label: '账户', icon: User }
       ]
     }
   ]

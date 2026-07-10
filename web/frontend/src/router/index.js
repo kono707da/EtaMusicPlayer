@@ -27,6 +27,11 @@ const routes = [
     name: 'plugins',
     component: () => import('../views/PluginsView.vue')
   },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('../views/SettingsView.vue')
+  },
   // 管理功能路由（需要当前激活节点管理员权限）
   {
     path: '/admin/scan',

@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router'
 import {
   Search, User, Library, ListMusic, Settings, RefreshCw,
   Wand2, Copy, TrendingUp, Network, Users, LogOut, ChevronDown, ChevronRight, Package,
-  ListChecks, ScrollText, BarChart3
+  ListChecks, ScrollText, BarChart3, SlidersHorizontal
 } from 'lucide-vue-next'
 import PlaylistTree from './components/PlaylistTree.vue'
 import PlayerBar from './components/PlayerBar.vue'
@@ -48,7 +48,8 @@ const coreNavItems = [
   { path: '/library', label: '工作台', icon: Library },
   { path: '/playlists', label: '播放列表', icon: ListMusic },
   { path: '/nodes', label: '节点设置', icon: Settings },
-  { path: '/plugins', label: '插件管理', icon: Package }
+  { path: '/plugins', label: '插件管理', icon: Package },
+  { path: '/settings', label: '设置', icon: SlidersHorizontal }
 ]
 
 // 插件贡献的导航项（按已启用插件动态聚合）

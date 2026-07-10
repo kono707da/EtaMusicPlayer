@@ -1,11 +1,18 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { Howl } from 'howler'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useNodesStore } from './nodes'
 import { getStreamUrl, reportPlayEvent } from '../api/node'
 
 const toast = useToast()
+
+/**
+ * 读取自动播放下一首设置（持久化在 localStorage）
+ */
+function _autoPlayNext() {
+  return localStorage.getItem('etamusic_auto_play_next') !== 'false'
+}
 
 /**
  * 上报播放事件到节点（静默失败，不阻塞播放）
@@ -32,10 +39,18 @@ export const usePlayerStore = defineStore('player', () => {
   const isPlaying = ref(false)
   const progress = ref(0) // 秒
   const duration = ref(0) // 秒
-  const volume = ref(0.8) // 0~1
+  const volume = ref((() => {
+    const v = parseFloat(localStorage.getItem('etamusic_volume'))
+    return isNaN(v) ? 0.8 : Math.min(1, Math.max(0, v))
+  })()) // 0~1，从 localStorage 恢复
   const loading = ref(false)
 
   let howl = null
+
+  // 音量变化时持久化到 localStorage
+  watch(volume, (v) => {
+    localStorage.setItem('etamusic_volume', String(v))
+  })
 
   const current = computed(() =>
     currentIndex.value >= 0 ? queue.value[currentIndex.value] : null
@@ -81,7 +96,18 @@ export const usePlayerStore = defineStore('player', () => {
       onend() {
         // 上报 complete 事件
         _reportPlay(current.value.nodeId, current.value.track.id, 'complete')
-        next()
+        // 根据设置决定是否自动播放下一首
+        if (_autoPlayNext()) {
+          // 自动推进不报 skip 事件（非用户主动跳过）
+          if (currentIndex.value < queue.value.length - 1) {
+            currentIndex.value++
+            loadCurrent()
+          } else {
+            isPlaying.value = false
+          }
+        } else {
+          isPlaying.value = false
+        }
       },
       onloaderror() {
         loading.value = false
