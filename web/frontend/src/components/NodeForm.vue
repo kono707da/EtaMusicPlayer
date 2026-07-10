@@ -111,7 +111,7 @@ async function onSubmit() {
     })
     close()
   } catch (e) {
-    toast.error('登录失败', e.response?.data?.detail || e.message)
+    toast.error('登录失败', e.response?.data?.detail || e.message, e)
   } finally {
     testing.value = false
   }

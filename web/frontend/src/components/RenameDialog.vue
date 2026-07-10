@@ -67,7 +67,7 @@ async function onPreview() {
       toast.info('预览完成', '没有需要重命名的文件')
     }
   } catch (e) {
-    toast.error('预览失败', e.response?.data?.detail || e.message)
+    toast.error('预览失败', e.response?.data?.detail || e.message, e)
   } finally {
     previewing.value = false
   }
@@ -91,7 +91,7 @@ async function onApply() {
     emit('applied')
     emit('update:visible', false)
   } catch (e) {
-    toast.error('重命名失败', e.response?.data?.detail || e.message)
+    toast.error('重命名失败', e.response?.data?.detail || e.message, e)
   } finally {
     applying.value = false
   }

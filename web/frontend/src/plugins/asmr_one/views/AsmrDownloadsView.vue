@@ -46,7 +46,7 @@ async function load() {
     const data = await listDownloads()
     tasks.value = data.tasks
   } catch (e) {
-    toast.error('加载失败', e?.response?.data?.detail || e.message)
+    toast.error('加载失败', e?.response?.data?.detail || e.message, e)
   } finally {
     loading.value = false
   }
@@ -78,7 +78,7 @@ async function onCancel(task) {
     toast.success('已请求取消')
     await load()
   } catch (e) {
-    toast.error('取消失败', e?.response?.data?.detail || e.message)
+    toast.error('取消失败', e?.response?.data?.detail || e.message, e)
   }
 }
 
@@ -88,7 +88,7 @@ async function onDelete(task) {
     toast.success('已删除')
     await load()
   } catch (e) {
-    toast.error('删除失败', e?.response?.data?.detail || e.message)
+    toast.error('删除失败', e?.response?.data?.detail || e.message, e)
   }
 }
 

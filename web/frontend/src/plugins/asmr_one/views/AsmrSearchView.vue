@@ -176,7 +176,7 @@ async function load() {
     }
     result.value = data
   } catch (e) {
-    toast.error('加载失败', e?.response?.data?.detail || e.message)
+    toast.error('加载失败', e?.response?.data?.detail || e.message, e)
     result.value = { works: [], pagination: { totalCount: 0, totalPage: 1 } }
   } finally {
     loading.value = false

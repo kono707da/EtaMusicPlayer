@@ -44,7 +44,7 @@ async function submit() {
     recommenderUuid.value = ''
   } catch (e) {
     const detail = e?.response?.data?.detail || e.message
-    toast.error(isRegister.value ? '注册失败' : '登录失败', detail)
+    toast.error(isRegister.value ? '注册失败' : '登录失败', detail, e)
   } finally {
     submitting.value = false
   }

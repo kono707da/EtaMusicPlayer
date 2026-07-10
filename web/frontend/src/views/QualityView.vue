@@ -48,7 +48,7 @@ async function loadPlaylists() {
     const data = await getPlaylists(node)
     playlists.value = Array.isArray(data) ? data : data.items || []
   } catch (e) {
-    toast.error('获取播放列表失败', e.message || String(e))
+    toast.error('获取播放列表失败', e.message || String(e), e)
   }
 }
 
@@ -66,7 +66,7 @@ async function onDetect() {
     upgrades.value = Array.isArray(data) ? data : data.items || []
     toast.success(`检测完成，共 ${upgrades.value.length} 个升级候选`)
   } catch (e) {
-    toast.error('检测失败', e.response?.data?.detail || e.message)
+    toast.error('检测失败', e.response?.data?.detail || e.message, e)
   } finally {
     detecting.value = false
   }
@@ -96,7 +96,7 @@ async function onReplace() {
     selectedNewTrackId.value = null
     await onDetect()
   } catch (e) {
-    toast.error('替换失败', e.response?.data?.detail || e.message)
+    toast.error('替换失败', e.response?.data?.detail || e.message, e)
   } finally {
     replacing.value = false
   }

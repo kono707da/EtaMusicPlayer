@@ -65,7 +65,7 @@ async function loadLogs() {
     }
   } catch (e) {
     logText.value = ''
-    toast.error('加载日志失败', e?.response?.data?.detail || e.message)
+    toast.error('加载日志失败', e?.response?.data?.detail || e.message, e)
   } finally {
     logLoading.value = false
   }
@@ -129,7 +129,7 @@ async function loadAsmrSettings() {
       } catch { /* 静默 */ }
     }
   } catch (e) {
-    toast.error('加载 ASMR 设置失败', e?.response?.data?.detail || e.message)
+    toast.error('加载 ASMR 设置失败', e?.response?.data?.detail || e.message, e)
   } finally {
     asmrLoading.value = false
   }
@@ -145,7 +145,7 @@ async function saveAsmrSettings() {
     })
     toast.success('ASMR 设置已保存')
   } catch (e) {
-    toast.error('保存失败', e?.response?.data?.detail || e.message)
+    toast.error('保存失败', e?.response?.data?.detail || e.message, e)
   } finally {
     asmrSaving.value = false
   }
@@ -171,7 +171,7 @@ async function loadBiliSettings() {
       cache_pool_size_mb: data.cache_pool_size_mb ?? '500'
     }
   } catch (e) {
-    toast.error('加载B站设置失败', e?.response?.data?.detail || e.message)
+    toast.error('加载B站设置失败', e?.response?.data?.detail || e.message, e)
   } finally {
     biliLoading.value = false
   }
@@ -189,7 +189,7 @@ async function saveBiliSettings() {
     await updateBiliSettings(updates)
     toast.success('B站设置已保存')
   } catch (e) {
-    toast.error('保存失败', e?.response?.data?.detail || e.message)
+    toast.error('保存失败', e?.response?.data?.detail || e.message, e)
   } finally {
     biliSaving.value = false
   }

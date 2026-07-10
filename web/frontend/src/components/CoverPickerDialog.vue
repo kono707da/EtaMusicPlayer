@@ -92,7 +92,7 @@ async function onConfirm() {
     emit('applied', res)
     emit('update:open', false)
   } catch (e) {
-    toast.error('应用封面失败', e?.response?.data?.detail || e.message)
+    toast.error('应用封面失败', e?.response?.data?.detail || e.message, e)
   } finally {
     applying.value = false
   }

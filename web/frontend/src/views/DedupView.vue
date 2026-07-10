@@ -87,7 +87,7 @@ async function onSaveConfig() {
     })
     toast.success('配置已保存')
   } catch (e) {
-    toast.error('保存失败', e.response?.data?.detail || e.message)
+    toast.error('保存失败', e.response?.data?.detail || e.message, e)
   } finally {
     savingConfig.value = false
   }
@@ -106,7 +106,7 @@ async function onDetect() {
     groups.value = Array.isArray(data) ? data : data.items || []
     toast.success(`检测完成，共 ${groups.value.length} 组重复`)
   } catch (e) {
-    toast.error('检测失败', e.response?.data?.detail || e.message)
+    toast.error('检测失败', e.response?.data?.detail || e.message, e)
   } finally {
     detecting.value = false
   }

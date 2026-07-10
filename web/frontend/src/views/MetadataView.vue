@@ -37,7 +37,7 @@ async function loadTracks() {
     tracks.value = data.items || data.tracks || []
     total.value = data.total || tracks.value.length
   } catch (e) {
-    toast.error('加载曲目失败', e.message || String(e))
+    toast.error('加载曲目失败', e.message || String(e), e)
   } finally {
     loading.value = false
   }

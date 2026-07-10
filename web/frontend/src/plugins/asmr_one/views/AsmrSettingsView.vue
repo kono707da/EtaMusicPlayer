@@ -34,7 +34,7 @@ async function load() {
       cache_pool_size_mb: data.cache_pool_size_mb ?? '500'
     }
   } catch (e) {
-    toast.error('加载失败', e?.response?.data?.detail || e.message)
+    toast.error('加载失败', e?.response?.data?.detail || e.message, e)
   } finally {
     loading.value = false
   }
@@ -49,7 +49,7 @@ async function save() {
     })
     toast.success('设置已保存')
   } catch (e) {
-    toast.error('保存失败', e?.response?.data?.detail || e.message)
+    toast.error('保存失败', e?.response?.data?.detail || e.message, e)
   } finally {
     saving.value = false
   }

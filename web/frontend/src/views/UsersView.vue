@@ -67,7 +67,7 @@ async function loadUsers() {
     const data = await getUsers(node)
     users.value = Array.isArray(data) ? data : data.items || []
   } catch (e) {
-    toast.error('获取用户列表失败', e.message || String(e))
+    toast.error('获取用户列表失败', e.message || String(e), e)
   } finally {
     loading.value = false
   }
@@ -118,7 +118,7 @@ async function onSave() {
     dialogVisible.value = false
     await loadUsers()
   } catch (e) {
-    toast.error('保存失败', e.response?.data?.detail || e.message)
+    toast.error('保存失败', e.response?.data?.detail || e.message, e)
   }
 }
 
@@ -134,7 +134,7 @@ async function onDelete(row) {
     toast.success('已删除')
     await loadUsers()
   } catch (e) {
-    toast.error('删除失败', e.response?.data?.detail || e.message)
+    toast.error('删除失败', e.response?.data?.detail || e.message, e)
   }
 }
 

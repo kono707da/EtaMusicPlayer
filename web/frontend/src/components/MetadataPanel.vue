@@ -249,7 +249,7 @@ async function saveMetadata() {
     emit('updated')
   } catch (e) {
     const detail = e?.response?.data?.detail || e?.message || '未知错误'
-    toast.error('保存失败', detail)
+    toast.error('保存失败', detail, e)
   }
 }
 
@@ -343,7 +343,7 @@ async function saveLyrics() {
     emit('updated')
   } catch (e) {
     const detail = e?.response?.data?.detail || e?.message || '未知错误'
-    toast.error('保存失败', detail)
+    toast.error('保存失败', detail, e)
   } finally {
     lyricsSaving.value = false
   }
@@ -402,7 +402,7 @@ async function onCoverFileChange(e) {
     emit('updated')
   } catch (err) {
     const detail = err?.response?.data?.detail || err?.message || '未知错误'
-    toast.error('上传失败', detail)
+    toast.error('上传失败', detail, err)
   } finally {
     coverUploading.value = false
   }
@@ -434,7 +434,7 @@ async function removeCover() {
     emit('updated')
   } catch (e) {
     const detail = e?.response?.data?.detail || e?.message || '未知错误'
-    toast.error('删除失败', detail)
+    toast.error('删除失败', detail, e)
   } finally {
     coverRemoving.value = false
   }
@@ -558,7 +558,7 @@ async function confirmUnsaved(action) {
       }
       emit('updated')
     } catch (e) {
-      toast.error('保存失败', e?.message || '未知错误')
+      toast.error('保存失败', e?.message || '未知错误', e)
       return
     }
   } else {

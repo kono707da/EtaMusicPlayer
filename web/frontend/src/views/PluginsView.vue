@@ -60,7 +60,7 @@ async function load() {
   try {
     plugins.value = await listPlugins()
   } catch (e) {
-    toast.error('加载插件列表失败', e.response?.data?.detail || e.message)
+    toast.error('加载插件列表失败', e.response?.data?.detail || e.message, e)
   } finally {
     loading.value = false
   }
@@ -91,7 +91,7 @@ async function onRefreshOnline() {
     onlinePlugins.value = await listOnlinePlugins()
     toast.success('在线注册表已刷新')
   } catch (e) {
-    toast.error('刷新失败', e.response?.data?.detail || e.message)
+    toast.error('刷新失败', e.response?.data?.detail || e.message, e)
   } finally {
     onlineLoading.value = false
   }
@@ -110,7 +110,7 @@ async function onInstall(plugin) {
     await load()
     await loadOnline()
   } catch (e) {
-    toast.error('安装失败', e.response?.data?.detail || e.message)
+    toast.error('安装失败', e.response?.data?.detail || e.message, e)
   } finally {
     installing.value = null
   }
@@ -129,7 +129,7 @@ async function onUpdate(plugin) {
     await load()
     await loadOnline()
   } catch (e) {
-    toast.error('更新失败', e.response?.data?.detail || e.message)
+    toast.error('更新失败', e.response?.data?.detail || e.message, e)
   } finally {
     updating.value = null
   }
@@ -179,7 +179,7 @@ async function onSync() {
     toast.success(result.message || '同步完成')
     await load()
   } catch (e) {
-    toast.error('同步失败', e.response?.data?.detail || e.message)
+    toast.error('同步失败', e.response?.data?.detail || e.message, e)
   } finally {
     syncing.value = false
   }
@@ -235,7 +235,7 @@ async function onApplyChanges() {
       setTimeout(() => window.location.reload(), 600)
     }
   } catch (e) {
-    toast.error('应用变更失败', e.message || '未知错误')
+    toast.error('应用变更失败', e.message || '未知错误', e)
     applying.value = false
     await load()
     pendingChanges.value = {}
@@ -268,7 +268,7 @@ async function onDelete(plugin) {
     await load()
     await loadOnline()
   } catch (e) {
-    toast.error('删除失败', e.response?.data?.detail || e.message)
+    toast.error('删除失败', e.response?.data?.detail || e.message, e)
   }
 }
 

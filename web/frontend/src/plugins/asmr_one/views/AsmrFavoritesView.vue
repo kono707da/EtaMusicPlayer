@@ -61,7 +61,7 @@ async function load() {
       selectedDetail.value = null
     }
   } catch (e) {
-    toast.error('加载失败', e?.response?.data?.detail || e.message)
+    toast.error('加载失败', e?.response?.data?.detail || e.message, e)
   } finally {
     loading.value = false
   }
@@ -85,7 +85,7 @@ async function selectPlaylist(id) {
     worksTotal.value = pag.totalCount || selectedDetail.value.works.length
     worksTotalPage.value = pag.totalPage || Math.ceil(worksTotal.value / worksPageSize.value) || 1
   } catch (e) {
-    toast.error('加载播放列表失败', e?.response?.data?.detail || e.message)
+    toast.error('加载播放列表失败', e?.response?.data?.detail || e.message, e)
   } finally {
     detailLoading.value = false
   }
@@ -102,7 +102,7 @@ async function changeWorksPage(p) {
     worksTotal.value = pag.totalCount || (selectedDetail.value?.works?.length || 0)
     worksTotalPage.value = pag.totalPage || Math.ceil(worksTotal.value / worksPageSize.value) || 1
   } catch (e) {
-    toast.error('加载失败', e?.response?.data?.detail || e.message)
+    toast.error('加载失败', e?.response?.data?.detail || e.message, e)
   } finally {
     detailLoading.value = false
   }
@@ -119,7 +119,7 @@ async function handleDeletePlaylist(pl) {
     }
     await load()
   } catch (e) {
-    toast.error('删除失败', e?.response?.data?.detail || e.message)
+    toast.error('删除失败', e?.response?.data?.detail || e.message, e)
   }
 }
 
@@ -137,7 +137,7 @@ async function handleCreate() {
     newDesc.value = ''
     await load()
   } catch (e) {
-    toast.error('创建失败', e?.response?.data?.detail || e.message)
+    toast.error('创建失败', e?.response?.data?.detail || e.message, e)
   } finally {
     creating.value = false
   }
@@ -157,7 +157,7 @@ async function handleRemoveWork(workId) {
     if (pl && pl.works_count > 0) pl.works_count -= 1
     toast.success('已移除')
   } catch (e) {
-    toast.error('移除失败', e?.response?.data?.detail || e.message)
+    toast.error('移除失败', e?.response?.data?.detail || e.message, e)
   }
 }
 

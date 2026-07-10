@@ -73,7 +73,7 @@ async function loadPlaylists() {
     const data = await getPlaylists(node)
     playlists.value = Array.isArray(data) ? data : data.items || []
   } catch (e) {
-    toast.error('获取播放列表失败', e.message || e)
+    toast.error('获取播放列表失败', e.message || e, e)
   } finally {
     loading.value = false
   }
@@ -94,7 +94,7 @@ async function loadDetail() {
     const items = data.items || []
     detailTracks.value = items.map((it) => it.track || it).filter(Boolean)
   } catch (e) {
-    toast.error('获取曲目失败', e.message || e)
+    toast.error('获取曲目失败', e.message || e, e)
   } finally {
     detailLoading.value = false
   }
@@ -129,7 +129,7 @@ async function onSave() {
     dialogVisible.value = false
     await loadPlaylists()
   } catch (e) {
-    toast.error('保存失败', e.response?.data?.detail || e.message)
+    toast.error('保存失败', e.response?.data?.detail || e.message, e)
   }
 }
 
@@ -153,7 +153,7 @@ async function onDelete(pl) {
     }
     await loadPlaylists()
   } catch (e) {
-    toast.error('删除失败', e.response?.data?.detail || e.message)
+    toast.error('删除失败', e.response?.data?.detail || e.message, e)
   }
 }
 
@@ -181,7 +181,7 @@ async function removeFromPlaylist() {
     toast.success('已移除')
     await loadDetail()
   } catch (e) {
-    toast.error('移除失败', e.message || e)
+    toast.error('移除失败', e.message || e, e)
   }
 }
 
@@ -198,7 +198,7 @@ async function openAddDialog() {
     const data = await getTracks(node, { page: 1, page_size: 100 })
     candidateTracks.value = data.items || data.tracks || []
   } catch (e) {
-    toast.error('加载曲库失败', e.message || e)
+    toast.error('加载曲库失败', e.message || e, e)
   } finally {
     candidateLoading.value = false
   }
@@ -220,7 +220,7 @@ async function addCandidates() {
     addDialogVisible.value = false
     await loadDetail()
   } catch (e) {
-    toast.error('添加失败', e.response?.data?.detail || e.message)
+    toast.error('添加失败', e.response?.data?.detail || e.message, e)
   }
 }
 

@@ -162,7 +162,7 @@ async function loadWork() {
   try {
     work.value = await getWork(workId.value)
   } catch (e) {
-    toast.error('加载作品失败', e?.response?.data?.detail || e.message)
+    toast.error('加载作品失败', e?.response?.data?.detail || e.message, e)
   } finally {
     loading.value = false
   }
@@ -176,7 +176,7 @@ async function loadTracks() {
     // 默认全选 audio 文件
     selectedPaths.value = new Set(data.files.map((f) => f.path))
   } catch (e) {
-    toast.error('加载文件树失败', e?.response?.data?.detail || e.message)
+    toast.error('加载文件树失败', e?.response?.data?.detail || e.message, e)
   } finally {
     tracksLoading.value = false
   }

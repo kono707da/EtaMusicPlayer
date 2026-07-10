@@ -51,7 +51,7 @@ async function loadLogs() {
     logs.value = data.items || []
     total.value = data.total || 0
   } catch (e) {
-    toast.error('加载审计日志失败', e.message || String(e))
+    toast.error('加载审计日志失败', e.message || String(e), e)
   } finally {
     loading.value = false
   }

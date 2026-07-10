@@ -39,7 +39,7 @@ async function load() {
     works.value = data.works || []
     totalPage.value = data.pagination?.totalPage || 1
   } catch (e) {
-    toast.error('加载失败', e?.response?.data?.detail || e.message)
+    toast.error('加载失败', e?.response?.data?.detail || e.message, e)
     works.value = []
   } finally {
     loading.value = false

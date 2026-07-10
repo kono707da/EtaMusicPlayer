@@ -31,7 +31,7 @@ async function load() {
     tasks.value = data.items || []
     total.value = data.total || 0
   } catch (e) {
-    toast.error('加载失败', e?.response?.data?.detail || e.message)
+    toast.error('加载失败', e?.response?.data?.detail || e.message, e)
   } finally {
     loading.value = false
   }
@@ -43,7 +43,7 @@ async function handleCancel(taskId) {
     toast.success('已取消')
     load()
   } catch (e) {
-    toast.error('取消失败', e?.response?.data?.detail || e.message)
+    toast.error('取消失败', e?.response?.data?.detail || e.message, e)
   }
 }
 
@@ -53,7 +53,7 @@ async function handleDelete(taskId) {
     toast.success('已删除')
     load()
   } catch (e) {
-    toast.error('删除失败', e?.response?.data?.detail || e.message)
+    toast.error('删除失败', e?.response?.data?.detail || e.message, e)
   }
 }
 

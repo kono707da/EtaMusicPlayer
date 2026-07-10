@@ -80,7 +80,7 @@ async function loadRemoteNodes() {
     remoteNodeList.value = await listRemoteNodes()
     autoCheckAllHealth()
   } catch (e) {
-    toast.error('加载远程节点失败', e.response?.data?.detail || e.message)
+    toast.error('加载远程节点失败', e.response?.data?.detail || e.message, e)
   } finally {
     remoteNodeLoading.value = false
   }
@@ -107,7 +107,7 @@ async function checkOneHealth(row, { silent = false } = {}) {
       message: msg,
       checking: false
     }
-    if (!silent) toast.error(isAuth ? '认证失败' : '连接失败', msg)
+    if (!silent) toast.error(isAuth ? '认证失败' : '连接失败', msg, e)
   }
 }
 
@@ -233,7 +233,8 @@ async function saveRemoteNode() {
       const isAuth = status === 401 || status === 403
       toast.error(
         isNew ? '添加失败：登录验证未通过' : '更新失败：登录验证未通过',
-        isAuth ? `认证失败：${msg}` : `连接失败：${msg}`
+        isAuth ? `认证失败：${msg}` : `连接失败：${msg}`,
+        loginErr
       )
     }
   } catch (e) {
@@ -241,7 +242,7 @@ async function saveRemoteNode() {
     if (isNew && createdNodeId) {
       try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
     }
-    toast.error('保存远程节点失败', e.response?.data?.detail || e.message)
+    toast.error('保存远程节点失败', e.response?.data?.detail || e.message, e)
   } finally {
     remoteNodeSaving.value = false
   }
@@ -263,7 +264,7 @@ async function confirmDeleteRemoteNode(row) {
     toast.success('已删除并退出登录')
     await loadRemoteNodes()
   } catch (e) {
-    toast.error('删除远程节点失败', e.response?.data?.detail || e.message)
+    toast.error('删除远程节点失败', e.response?.data?.detail || e.message, e)
   }
 }
 
@@ -275,7 +276,7 @@ async function activateRemoteNodeAction(row) {
     toast.success(`已设为当前节点：${row.name}`)
     await loadRemoteNodes()
   } catch (e) {
-    toast.error('设置失败', e.response?.data?.detail || e.message)
+    toast.error('设置失败', e.response?.data?.detail || e.message, e)
   }
 }
 

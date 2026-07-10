@@ -112,7 +112,7 @@ async function onSearch() {
     await libraryStore.globalSearch(searchKeyword.value.trim())
     router.push('/library')
   } catch (e) {
-    toast.error('搜索失败', e.message || String(e))
+    toast.error('搜索失败', e.message || String(e), e)
   }
 }
 

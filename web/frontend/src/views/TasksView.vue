@@ -75,7 +75,7 @@ async function loadTasks() {
     tasks.value = data.items || []
     total.value = data.total || 0
   } catch (e) {
-    toast.error('加载任务列表失败', e.message || String(e))
+    toast.error('加载任务列表失败', e.message || String(e), e)
   } finally {
     loading.value = false
   }
@@ -89,7 +89,7 @@ async function onCancel(task) {
     toast.success('任务已取消')
     loadTasks()
   } catch (e) {
-    toast.error('取消任务失败', e.message || String(e))
+    toast.error('取消任务失败', e.message || String(e), e)
   }
 }
 

@@ -47,7 +47,7 @@ async function loadPlaylists() {
     const data = await getPlaylists(node)
     playlists.value = Array.isArray(data) ? data : data.items || []
   } catch (e) {
-    toast.error('获取播放列表失败', e.message || String(e))
+    toast.error('获取播放列表失败', e.message || String(e), e)
   }
 }
 
@@ -58,7 +58,7 @@ async function loadUsers() {
     const data = await getUsers(node)
     users.value = Array.isArray(data) ? data : data.items || []
   } catch (e) {
-    toast.error('获取用户列表失败', e.message || String(e))
+    toast.error('获取用户列表失败', e.message || String(e), e)
   }
 }
 
@@ -88,7 +88,7 @@ async function onGrant(userId) {
     toast.success('已授权')
     await loadPermissions()
   } catch (e) {
-    toast.error('授权失败', e.response?.data?.detail || e.message)
+    toast.error('授权失败', e.response?.data?.detail || e.message, e)
   }
 }
 
@@ -105,7 +105,7 @@ async function onRevoke(userId) {
     toast.success('已撤销')
     await loadPermissions()
   } catch (e) {
-    toast.error('撤销失败', e.response?.data?.detail || e.message)
+    toast.error('撤销失败', e.response?.data?.detail || e.message, e)
   }
 }
 

@@ -26,7 +26,7 @@ async function loadDashboard() {
   try {
     dashboard.value = await getDashboard(node)
   } catch (e) {
-    toast.error('加载看板数据失败', e.message || String(e))
+    toast.error('加载看板数据失败', e.message || String(e), e)
   } finally {
     loading.value = false
   }

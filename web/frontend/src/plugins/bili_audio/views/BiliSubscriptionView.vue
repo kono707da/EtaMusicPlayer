@@ -55,7 +55,7 @@ async function fetchList() {
     const data = await listSubscriptions()
     subscriptions.value = data.items || []
   } catch (e) {
-    toast.error('获取订阅列表失败', e?.response?.data?.detail || e.message)
+    toast.error('获取订阅列表失败', e?.response?.data?.detail || e.message, e)
   } finally {
     loading.value = false
   }
@@ -75,7 +75,7 @@ async function handleAdd() {
     toast.success('订阅添加成功')
     await fetchList()
   } catch (e) {
-    toast.error('添加订阅失败', e?.response?.data?.detail || e.message)
+    toast.error('添加订阅失败', e?.response?.data?.detail || e.message, e)
   } finally {
     adding.value = false
   }
@@ -97,7 +97,7 @@ async function handleCheck(subId) {
   } catch (e) {
     const msg = e?.response?.data?.detail || e.message
     checkResults[subId] = `检查失败: ${msg}`
-    toast.error('检查更新失败', msg)
+    toast.error('检查更新失败', msg, e)
   } finally {
     checkingMap[subId] = false
   }
@@ -109,7 +109,7 @@ async function handleToggleAutoDownload(sub) {
     sub.auto_download = !sub.auto_download
     toast.success(sub.auto_download ? '已开启自动下载' : '已关闭自动下载')
   } catch (e) {
-    toast.error('更新订阅失败', e?.response?.data?.detail || e.message)
+    toast.error('更新订阅失败', e?.response?.data?.detail || e.message, e)
   }
 }
 
@@ -119,7 +119,7 @@ async function handleDelete(subId) {
     toast.success('订阅已删除')
     await fetchList()
   } catch (e) {
-    toast.error('删除订阅失败', e?.response?.data?.detail || e.message)
+    toast.error('删除订阅失败', e?.response?.data?.detail || e.message, e)
   }
 }
 

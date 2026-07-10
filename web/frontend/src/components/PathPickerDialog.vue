@@ -39,7 +39,7 @@ async function loadDir(path) {
     entries.value = data.entries || []
     displayPath.value = data.path || ''
   } catch (e) {
-    toast.error('读取目录失败', e.response?.data?.detail || e.message)
+    toast.error('读取目录失败', e.response?.data?.detail || e.message, e)
     entries.value = []
   } finally {
     loading.value = false

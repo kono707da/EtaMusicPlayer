@@ -371,7 +371,7 @@ async function commitInlineEdit(row) {
     emit('metadata-updated')
   } catch (e) {
     const detail = e?.response?.data?.detail || e?.message || '未知错误'
-    toast.error('编辑失败', `字段 ${field} 保存失败：${detail}`)
+    toast.error('编辑失败', `字段 ${field} 保存失败：${detail}`, e)
   } finally {
     inlineEdit.value = { rowId: null, field: null, value: '', saving: false }
   }

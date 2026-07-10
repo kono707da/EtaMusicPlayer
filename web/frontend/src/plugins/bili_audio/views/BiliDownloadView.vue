@@ -73,7 +73,7 @@ async function handleDownload() {
     toast.success('下载任务已创建')
     router.push('/bili/tasks')
   } catch (e) {
-    toast.error('创建下载失败', e?.response?.data?.detail || e.message)
+    toast.error('创建下载失败', e?.response?.data?.detail || e.message, e)
   } finally {
     downloading.value = false
   }

@@ -85,7 +85,7 @@ async function onTrigger(watchDirId) {
     )
     await refreshDirs()
   } catch (e) {
-    toast.error('触发失败', e.response?.data?.detail || e.message)
+    toast.error('触发失败', e.response?.data?.detail || e.message, e)
   } finally {
     triggering.value = false
   }
@@ -107,7 +107,7 @@ async function onAddDir() {
     newDir.value.path = ''
     refreshDirs()
   } catch (e) {
-    toast.error('添加失败', e.response?.data?.detail || e.message)
+    toast.error('添加失败', e.response?.data?.detail || e.message, e)
   }
 }
 
@@ -123,7 +123,7 @@ async function onRemoveDir(row) {
     toast.success('已移除')
     refreshDirs()
   } catch (e) {
-    toast.error('移除失败', e.message || String(e))
+    toast.error('移除失败', e.message || String(e), e)
   }
 }
 
