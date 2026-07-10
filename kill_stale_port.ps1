@@ -1,9 +1,17 @@
-# Kill stale EtaMusic backend processes on port 8000.
-# Only kills processes whose command line looks like our uvicorn.
+# Kill stale EtaMusic processes on a given port.
+# Only kills processes whose command line looks like our uvicorn / eta_node.
 # Returns: 0 if port is free (or was freed), 1 if still occupied by us, 2 if occupied by other.
+#
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File kill_stale_port.ps1                       # default port 8000
+#   powershell -ExecutionPolicy Bypass -File kill_stale_port.ps1 -Port 8001            # node port
+
+param(
+    [int]$Port = 8000
+)
 
 $ErrorActionPreference = 'SilentlyContinue'
-$port = 8000
+$port = $Port
 
 function Get-PortOwners {
     param([int]$Port)
@@ -17,7 +25,7 @@ function Get-PortOwners {
             Pid       = $pid_
             Name      = $proc.Name
             CmdLine   = $proc.CommandLine
-            IsOurs    = ($proc.CommandLine -like '*app.main:app*') -or ($proc.CommandLine -like '*eta_web.main:app*') -or ($proc.CommandLine -like '*uvicorn*--port 8000*')
+            IsOurs    = ($proc.CommandLine -like '*app.main:app*') -or ($proc.CommandLine -like '*eta_web.main:app*') -or ($proc.CommandLine -like '*eta_node.standalone:app*') -or ($proc.CommandLine -like "*uvicorn*--port $Port*")
         }
     }
     return $owners
