@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -9,9 +10,25 @@ import yaml
 from pydantic_settings import BaseSettings
 
 
+def _get_base_dir() -> Path:
+    """获取运行时基础目录
+
+    - 开发模式: eta_node 包的上级目录 (node/)
+    - PyInstaller onedir: exe 所在目录
+    - PyInstaller onefile: 临时解压目录
+    """
+    if getattr(sys, "frozen", False):
+        # PyInstaller 打包后
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+BASE_DIR = _get_base_dir()
+
+
 def _load_yaml_config() -> dict:
     config_paths = [
-        Path(__file__).resolve().parent.parent / "config.yaml",
+        BASE_DIR / "config.yaml",
         Path("config.yaml"),
     ]
     for p in config_paths:
@@ -42,14 +59,14 @@ class NodeSettings(BaseSettings):
         p = Path(self.db_path)
         if p.is_absolute():
             return p
-        return Path(__file__).resolve().parent.parent / p
+        return BASE_DIR / p
 
     @property
     def staging_absolute_path(self) -> Path:
         p = Path(self.staging_dir)
         if p.is_absolute():
             return p
-        return Path(__file__).resolve().parent.parent / p
+        return BASE_DIR / p
 
     @property
     def database_url(self) -> str:

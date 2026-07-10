@@ -41,7 +41,31 @@ def get_db():
 
 
 def init_db() -> None:
-    """建表（仅当表不存在时创建）"""
+    """建表（仅当表不存在时创建）+ 轻量迁移（补齐新增列）"""
     from eta_web.plugins_manager import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _auto_migrate()
+
+
+def _auto_migrate() -> None:
+    """轻量迁移：检查并补齐模型中新增的列
+
+    SQLAlchemy create_all 不会给已有表添加新列，
+    这里用 PRAGMA table_info 检测并 ALTER TABLE 补齐。
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(str(_db_path))
+    try:
+        # remote_nodes.is_active（v2 新增）
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(remote_nodes)")}
+        if "is_active" not in cols:
+            conn.execute(
+                "ALTER TABLE remote_nodes ADD COLUMN is_active BOOLEAN DEFAULT 0 NOT NULL"
+            )
+            conn.commit()
+    except sqlite3.OperationalError:
+        pass  # 表不存在，create_all 会处理
+    finally:
+        conn.close()
