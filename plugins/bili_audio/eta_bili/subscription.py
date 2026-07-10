@@ -16,7 +16,6 @@ from eta_bili.bili_client import BiliClient
 from eta_bili.database import SessionLocal
 from eta_bili.models import BiliDownloadTask, BiliSubscription
 from eta_bili.downloader import start_download_task
-from eta_bili.routers import _get_settings_dict
 
 try:
     from eta_node.database import SessionLocal as LocalSession
@@ -51,6 +50,9 @@ def check_subscription(sub_id: Optional[int] = None) -> int:
     """
     db = SessionLocal()
     try:
+        # 延迟导入避免与 routers.py 的循环导入
+        from eta_bili.routers import _get_settings_dict
+
         settings = _get_settings_dict(db)
         cookie = settings.get("bili_cookie") or ""
         client = BiliClient(cookie=cookie)

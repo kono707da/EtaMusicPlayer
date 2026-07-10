@@ -27,6 +27,15 @@ except ImportError:
 
 router = APIRouter(prefix="/api/bili", tags=["bili"])
 
+
+def get_db_bili():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 DEFAULT_SETTINGS = {
     "bili_cookie": "",
     "default_subdir": "BiliAudio",
@@ -461,11 +470,3 @@ def _task_to_dict(task: BiliDownloadTask) -> dict:
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         "finished_at": task.finished_at.isoformat() if task.finished_at else None,
     }
-
-
-def get_db_bili():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
