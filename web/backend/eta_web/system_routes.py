@@ -11,10 +11,20 @@ from collections import deque
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("eta_web.system")
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+class FrontendErrorReport(BaseModel):
+    """前端错误上报请求体"""
+
+    title: str = Field(..., description="错误标题")
+    description: str = Field("", description="错误详情")
+    url: str = Field("", description="触发错误的页面 URL")
+    timestamp: str = Field("", description="前端时间戳")
 
 # 日志文件路径（与 main.py 中 LOG_FILE 保持一致）
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -50,6 +60,23 @@ def _read_tail_lines(path: Path, max_lines: int) -> list[str]:
     except OSError as exc:
         logger.warning("读取日志文件失败: %s", exc, exc_info=True)
         return []
+
+
+@router.post("/frontend-error")
+def report_frontend_error(report: FrontendErrorReport) -> dict:
+    """接收前端错误上报，写入后端日志。
+
+    前端 toast.error 触发时会异步调用此端点（fire-and-forget），
+    使前端 UI 错误也能在设置页面的日志查看中检索到。
+    """
+    logger.error(
+        "前端错误: [%s] %s | URL: %s | 时间: %s",
+        report.title,
+        report.description,
+        report.url,
+        report.timestamp,
+    )
+    return {"ok": True}
 
 
 @router.get("/logs")
