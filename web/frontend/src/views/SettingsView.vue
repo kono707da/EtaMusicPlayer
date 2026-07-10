@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Slider } from '@/components/ui/slider'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Save, Loader2, Settings, Headphones, Music, RefreshCw, Download, ScrollText } from 'lucide-vue-next'
@@ -38,30 +37,6 @@ watch(tabs, (newTabs) => {
     activeTab.value = 'system'
   }
 })
-
-// ============ 系统设置 ============
-const systemForm = ref({
-  volume: 0.8,
-  autoPlayNext: true,
-})
-const systemSaving = ref(false)
-
-function loadSystemSettings() {
-  const vol = localStorage.getItem('etamusic_volume')
-  systemForm.value.volume = vol !== null ? parseFloat(vol) : 0.8
-  systemForm.value.autoPlayNext = localStorage.getItem('etamusic_auto_play_next') !== 'false'
-}
-
-async function saveSystemSettings() {
-  systemSaving.value = true
-  try {
-    localStorage.setItem('etamusic_volume', String(systemForm.value.volume))
-    localStorage.setItem('etamusic_auto_play_next', String(systemForm.value.autoPlayNext))
-    toast.success('系统设置已保存')
-  } finally {
-    systemSaving.value = false
-  }
-}
 
 // ============ 系统日志 ============
 const logLevel = ref('ERROR')
@@ -222,7 +197,6 @@ async function saveBiliSettings() {
 
 // ============ 初始化 ============
 onMounted(() => {
-  loadSystemSettings()
   loadLogs()
   if (pluginsStore.enabledNames.includes('asmr_one')) loadAsmrSettings()
   if (pluginsStore.enabledNames.includes('bili_audio')) loadBiliSettings()
@@ -251,47 +225,6 @@ onMounted(() => {
 
     <!-- 系统设置 -->
     <div v-show="activeTab === 'system'" class="space-y-4">
-      <div class="max-w-xl space-y-4">
-      <Card class="border-border bg-card/40">
-        <CardHeader>
-          <CardTitle class="text-base">播放器</CardTitle>
-        </CardHeader>
-        <CardContent class="space-y-5">
-          <!-- 音量 -->
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <Label>默认音量</Label>
-              <span class="text-sm text-muted-foreground">{{ Math.round(systemForm.volume * 100) }}%</span>
-            </div>
-            <Slider
-              :model-value="[Math.round(systemForm.volume * 100)]"
-              :max="100"
-              :step="1"
-              @update:model-value="(v) => systemForm.volume = (v[0] / 100)"
-            />
-            <p class="text-xs text-muted-foreground">页面刷新后恢复此音量设置</p>
-          </div>
-
-          <!-- 自动播放下一首 -->
-          <div class="flex items-center justify-between gap-3">
-            <div class="flex flex-col gap-1">
-              <Label>自动播放下一首</Label>
-              <p class="text-xs text-muted-foreground">当前曲目播放完毕后自动播放队列中的下一首</p>
-            </div>
-            <Switch v-model:checked="systemForm.autoPlayNext" />
-          </div>
-        </CardContent>
-      </Card>
-
-      <div class="flex justify-end">
-        <Button variant="gold" :disabled="systemSaving" @click="saveSystemSettings">
-          <Loader2 v-if="systemSaving" class="h-4 w-4 animate-spin" />
-          <Save v-else class="h-4 w-4" />
-          保存
-        </Button>
-      </div>
-      </div>
-
       <!-- 日志查看 -->
       <Card class="border-border bg-card/40">
         <CardHeader>
