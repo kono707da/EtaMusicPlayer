@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,11 +23,33 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from eta_web.plugins import load_plugins
 from eta_web.plugins_manager.routers import router as plugins_router, set_loaded_plugins
+from eta_web.system_routes import router as system_router
 
 logger = logging.getLogger("eta_web")
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+# 日志目录：web/backend/data/logs/
+LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "logs")
+LOG_FILE = os.path.join(LOG_DIR, "eta_web.log")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# 根日志配置：控制台 + 轮转文件（单份 2MB，保留 5 份）
+_logging_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_logging_fmt)
+
+_file_handler = RotatingFileHandler(
+    LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8"
 )
+_file_handler.setFormatter(_logging_fmt)
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+_root_logger.addHandler(_console_handler)
+_root_logger.addHandler(_file_handler)
+
+# 第三方库日志降到 WARNING，避免刷屏
+for _noisy in ("uvicorn.access", "httpx", "httpcore", "urllib3"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 FRONTEND_DIST = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist")
@@ -72,6 +95,7 @@ app.add_middleware(
 )
 
 app.include_router(plugins_router)
+app.include_router(system_router)
 
 
 @app.get("/health", tags=["root"])

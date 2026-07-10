@@ -136,4 +136,35 @@
   .nav-item-active:hover {
     @apply bg-primary/15 text-primary;
   }
+
+  /* 日志查看区 */
+  .log-view {
+    @apply rounded-md border border-border overflow-auto;
+    background: hsl(0 0% 3%);
+    max-height: 460px;
+    min-height: 160px;
+  }
+  .log-pre {
+    @apply m-0 p-3 whitespace-pre;
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", "Consolas", monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: hsl(0 0% 78%);
+    word-break: break-all;
+  }
+  .log-pre code {
+    font-family: inherit;
+  }
+  .log-err {
+    color: hsl(0 84% 70%);
+  }
+  .log-warn {
+    color: hsl(46 90% 65%);
+  }
+  .log-info {
+    color: hsl(0 0% 82%);
+  }
+  .log-other {
+    color: hsl(0 0% 55%);
+  }
 }
