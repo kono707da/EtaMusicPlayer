@@ -60,8 +60,7 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
     uvicorn.run(
-        "eta_node.standalone:app",
+        app,
         host=settings.host,
         port=settings.port,
-        reload=False,
     )
