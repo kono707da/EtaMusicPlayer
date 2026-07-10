@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { useNodesStore } from '../stores/nodes'
 import { useAuthStore } from '../stores/auth'
 import { usePluginsStore } from '../stores/plugins'
-import NodeForm from '../components/NodeForm.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -34,11 +33,10 @@ import {
   createRemoteNode,
   updateRemoteNode,
   deleteRemoteNode,
-  testRemoteNode,
   loginRemoteNode,
   activateRemoteNode
 } from '../api/plugin'
-import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, LogIn, LogOut, Star } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, Star } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -47,11 +45,6 @@ const authStore = useAuthStore()
 const pluginsStore = usePluginsStore()
 const toast = useToast()
 const { confirm } = useConfirm()
-
-const formVisible = ref(false)
-const editingNode = ref(null)
-const presetNode = ref(null)
-const loggingId = ref(null)
 
 const localNode = computed(() => pluginsStore.localNode)
 const localNodeRecord = computed(() =>
@@ -63,7 +56,6 @@ const remoteNodeLoading = ref(false)
 const remoteNodeDialogVisible = ref(false)
 const editingRemoteNodeId = ref(null)
 const remoteNodeSaving = ref(false)
-const testingNodeId = ref(null)
 
 // 自动健康检测状态：nodeId -> { status, message, checking }
 // status: 'checking' | 'online' | 'offline' | 'auth_failed' | ''
@@ -75,8 +67,7 @@ const remoteNodeForm = reactive({
   url: '',
   username: 'admin',
   password: '',
-  verify_ssl: true,
-  enabled: true
+  verify_ssl: true
 })
 
 const remoteNodeErrors = reactive({})
@@ -87,7 +78,6 @@ async function loadRemoteNodes() {
   remoteNodeLoading.value = true
   try {
     remoteNodeList.value = await listRemoteNodes()
-    // 加载完成后自动健康检测
     autoCheckAllHealth()
   } catch (e) {
     toast.error('加载远程节点失败', e.response?.data?.detail || e.message)
@@ -96,37 +86,28 @@ async function loadRemoteNodes() {
   }
 }
 
-// 对单个节点执行健康检测
-// success=true => online；连接失败 => offline；认证失败 => auth_failed
+// 健康检测 + 登录一步完成：直接调用 login 获取 token
+// 成功 => online + 已登录；认证失败 => auth_failed；连接失败 => offline
 async function checkOneHealth(row, { silent = false } = {}) {
   nodeHealth[row.id] = { status: 'checking', message: '', checking: true }
   try {
-    const result = await testRemoteNode(row.id)
-    if (result.success) {
-      nodeHealth[row.id] = { status: 'online', message: result.message, checking: false }
-      // 测试通过且未登录，自动静默登录
-      if (!isRemoteNodeLoggedIn(row)) {
-        try {
-          await loginRemoteNodeAction(row, { silent: true })
-        } catch { /* 登录失败不阻塞健康检测展示 */ }
-      }
-    } else {
-      const msg = result.message || ''
-      // 区分离线 vs 认证失败
-      const isAuth = /认证失败|HTTP 4\d\d|401|403/.test(msg)
-      nodeHealth[row.id] = {
-        status: isAuth ? 'auth_failed' : 'offline',
-        message: msg,
-        checking: false
-      }
-      if (!silent) {
-        toast.error('连接测试失败', msg)
-      }
-    }
+    const result = await loginRemoteNode(row.id)
+    // 登录成功 => 在线
+    nodeHealth[row.id] = { status: 'online', message: '连接正常', checking: false }
+    // 更新 nodesStore 中的 token
+    syncRemoteNodeToStore(row, result)
+    if (!silent) toast.success(`已连接：${row.name}`)
   } catch (e) {
+    const status = e.response?.status
     const msg = e.response?.data?.detail || e.message
-    nodeHealth[row.id] = { status: 'offline', message: msg, checking: false }
-    if (!silent) toast.error('连接测试失败', msg)
+    // 401/403 => 认证失败（节点在线但凭证错）；其他 => 离线
+    const isAuth = status === 401 || status === 403
+    nodeHealth[row.id] = {
+      status: isAuth ? 'auth_failed' : 'offline',
+      message: msg,
+      checking: false
+    }
+    if (!silent) toast.error(isAuth ? '认证失败' : '连接失败', msg)
   }
 }
 
@@ -134,100 +115,33 @@ async function checkOneHealth(row, { silent = false } = {}) {
 async function autoCheckAllHealth() {
   if (remoteNodeList.value.length === 0) return
   autoChecking.value = true
-  // 并行检测，每个节点独立处理，互不阻塞
   await Promise.allSettled(remoteNodeList.value.map((row) => checkOneHealth(row, { silent: true })))
   autoChecking.value = false
 }
 
-function openAddRemote() {
-  editingNode.value = null
-  presetNode.value = null
-  formVisible.value = true
-}
-
-function openEdit(node) {
-  editingNode.value = node
-  presetNode.value = null
-  formVisible.value = true
-}
-
-function onSaved(payload) {
-  if (payload.id) {
-    nodesStore.updateNode(payload.id, {
-      name: payload.name,
-      baseUrl: payload.baseUrl,
-      username: payload.username,
-      password: payload.password,
-      token: payload.token,
-      userInfo: payload.userInfo
+// 将远程节点登录结果同步到 nodesStore
+function syncRemoteNodeToStore(row, loginResult) {
+  const nodeId = `remote-${row.id}`
+  const nodeData = {
+    id: nodeId,
+    name: row.name,
+    baseUrl: row.url,
+    username: row.username,
+    password: '',
+    token: loginResult.access_token,
+    userInfo: loginResult.user_info
+  }
+  const existing = nodesStore.nodes.find((n) => n.id === nodeId)
+  if (existing) {
+    nodesStore.updateNode(nodeId, {
+      token: loginResult.access_token,
+      userInfo: loginResult.user_info,
+      name: row.name,
+      baseUrl: row.url
     })
-    toast.success('节点已更新并登录')
-    if (payload.id === nodesStore.activeNodeId) {
-      authStore.restoreFromNode(nodesStore.activeNode)
-    }
   } else {
-    nodesStore.addNode({
-      name: payload.name,
-      baseUrl: payload.baseUrl,
-      username: payload.username,
-      password: payload.password
-    })
-    const added = nodesStore.nodes[nodesStore.nodes.length - 1]
-    nodesStore.updateNode(added.id, {
-      token: payload.token,
-      userInfo: payload.userInfo
-    })
-    nodesStore.setActive(added.id)
-    nodesStore.authVersion++
-    toast.success('节点已添加并登录')
+    nodesStore.addNode(nodeData)
   }
-  if (route.query.redirect) {
-    router.replace(route.query.redirect)
-  }
-}
-
-async function onLogin(node) {
-  loggingId.value = node.id
-  try {
-    await nodesStore.loginNode(node.id)
-    authStore.restoreFromNode(nodesStore.activeNode)
-    toast.success(`已登录节点：${node.name}`)
-    if (route.query.redirect) {
-      router.replace(route.query.redirect)
-    }
-  } catch (e) {
-    toast.error('登录失败', e.response?.data?.detail || e.message)
-  } finally {
-    loggingId.value = null
-  }
-}
-
-async function onLogout(node) {
-  const ok = await confirm(`确定登出节点「${node.name}」？配置保留，可重新登录。`, {
-    title: '提示',
-    type: 'warning'
-  })
-  if (!ok) return
-  nodesStore.logoutNode(node.id)
-  authStore.restoreFromNode(nodesStore.activeNode)
-  toast.success('已登出')
-}
-
-async function onDelete(node) {
-  const ok = await confirm(`确定删除节点「${node.name}」？该节点的本地凭证将被清除。`, {
-    title: '提示',
-    type: 'danger'
-  })
-  if (!ok) return
-  nodesStore.removeNode(node.id)
-  authStore.restoreFromNode(nodesStore.activeNode)
-  toast.success('已删除')
-}
-
-function setActive(node) {
-  nodesStore.setActive(node.id)
-  authStore.restoreFromNode(node)
-  toast.success(`已切换到节点：${node.name}`)
 }
 
 function openAddRemoteNode() {
@@ -237,7 +151,6 @@ function openAddRemoteNode() {
   remoteNodeForm.username = 'admin'
   remoteNodeForm.password = ''
   remoteNodeForm.verify_ssl = true
-  remoteNodeForm.enabled = true
   Object.keys(remoteNodeErrors).forEach((k) => delete remoteNodeErrors[k])
   remoteNodeDialogVisible.value = true
 }
@@ -249,7 +162,6 @@ function openEditRemoteNode(row) {
   remoteNodeForm.username = row.username || 'admin'
   remoteNodeForm.password = ''
   remoteNodeForm.verify_ssl = row.verify_ssl !== false
-  remoteNodeForm.enabled = row.enabled !== false
   Object.keys(remoteNodeErrors).forEach((k) => delete remoteNodeErrors[k])
   remoteNodeDialogVisible.value = true
 }
@@ -264,112 +176,104 @@ function validateRemoteNode() {
   return Object.keys(remoteNodeErrors).length === 0
 }
 
+// 保存远程节点：必须登录成功才保存
 async function saveRemoteNode() {
   if (!validateRemoteNode()) return
   remoteNodeSaving.value = true
+  const isNew = !editingRemoteNodeId.value
+  let createdNodeId = null
   try {
     const payload = {
       name: remoteNodeForm.name,
       url: remoteNodeForm.url.replace(/\/$/, ''),
       username: remoteNodeForm.username,
       verify_ssl: remoteNodeForm.verify_ssl,
-      enabled: remoteNodeForm.enabled
+      enabled: true
     }
     if (remoteNodeForm.password) {
       payload.password = remoteNodeForm.password
     }
     if (editingRemoteNodeId.value) {
       await updateRemoteNode(editingRemoteNodeId.value, payload)
-      toast.success('远程节点已更新')
     } else {
-      await createRemoteNode(payload)
-      toast.success('远程节点已添加')
+      const created = await createRemoteNode(payload)
+      createdNodeId = created.id
     }
-    remoteNodeDialogVisible.value = false
-    await loadRemoteNodes()
+
+    // 登录验证：必须成功才保留节点
+    const nodeId = editingRemoteNodeId.value || createdNodeId
+    try {
+      const loginResult = await loginRemoteNode(nodeId)
+      // 登录成功，同步到 store
+      const row = remoteNodeList.value.find((r) => r.id === nodeId) || {
+        id: nodeId,
+        name: remoteNodeForm.name,
+        url: payload.url,
+        username: remoteNodeForm.username
+      }
+      syncRemoteNodeToStore(row, loginResult)
+      nodeHealth[nodeId] = { status: 'online', message: '连接正常', checking: false }
+      // 设为当前活动节点
+      nodesStore.setActive(`remote-${nodeId}`)
+      nodesStore.authVersion++
+      authStore.restoreFromNode(nodesStore.activeNode)
+      toast.success(isNew ? '节点已添加并登录' : '节点已更新并登录')
+      remoteNodeDialogVisible.value = false
+      await loadRemoteNodes()
+      if (route.query.redirect) {
+        router.replace(route.query.redirect)
+      }
+    } catch (loginErr) {
+      // 登录失败：新建节点则回滚删除
+      if (isNew && createdNodeId) {
+        try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
+      }
+      const status = loginErr.response?.status
+      const msg = loginErr.response?.data?.detail || loginErr.message
+      const isAuth = status === 401 || status === 403
+      toast.error(
+        isNew ? '添加失败：登录验证未通过' : '更新失败：登录验证未通过',
+        isAuth ? `认证失败：${msg}` : `连接失败：${msg}`
+      )
+    }
   } catch (e) {
+    // 创建/更新本身失败
+    if (isNew && createdNodeId) {
+      try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
+    }
     toast.error('保存远程节点失败', e.response?.data?.detail || e.message)
   } finally {
     remoteNodeSaving.value = false
   }
 }
 
+// 删除 = 退出登录 + 删除配置
 async function confirmDeleteRemoteNode(row) {
-  const ok = await confirm(`确定删除远程节点「${row.name}」？`, {
+  const ok = await confirm(`确定删除远程节点「${row.name}」？将同时退出登录并删除配置。`, {
     title: '提示',
     type: 'danger'
   })
   if (!ok) return
   try {
     await deleteRemoteNode(row.id)
-    toast.success('已删除')
+    // 从 store 移除（退出登录）
+    nodesStore.removeNode(`remote-${row.id}`)
+    authStore.restoreFromNode(nodesStore.activeNode)
+    delete nodeHealth[row.id]
+    toast.success('已删除并退出登录')
     await loadRemoteNodes()
   } catch (e) {
     toast.error('删除远程节点失败', e.response?.data?.detail || e.message)
   }
 }
 
-async function testRemoteNodeConnection(row) {
-  testingNodeId.value = row.id
-  try {
-    await checkOneHealth(row)
-    const h = nodeHealth[row.id]
-    if (h && h.status === 'online') {
-      toast.success('连接测试成功', h.message)
-    }
-  } finally {
-    testingNodeId.value = null
-  }
-}
-
-async function loginRemoteNodeAction(row, { silent = false } = {}) {
-  loggingId.value = row.id
-  try {
-    const result = await loginRemoteNode(row.id)
-    const nodeData = {
-      id: `remote-${row.id}`,
-      name: row.name,
-      baseUrl: row.url,
-      username: row.username,
-      password: '',
-      token: result.access_token,
-      userInfo: result.user_info
-    }
-    const existing = nodesStore.nodes.find((n) => n.id === nodeData.id)
-    if (existing) {
-      nodesStore.updateNode(nodeData.id, {
-        token: result.access_token,
-        userInfo: result.user_info,
-        name: row.name,
-        baseUrl: row.url
-      })
-    } else {
-      nodesStore.addNode(nodeData)
-      nodesStore.updateNode(nodeData.id, {
-        token: result.access_token,
-        userInfo: result.user_info
-      })
-    }
-    nodesStore.setActive(nodeData.id)
-    nodesStore.authVersion++
-    authStore.restoreFromNode(nodesStore.activeNode)
-    if (!silent) toast.success(`已登录节点：${row.name}`)
-    if (route.query.redirect) {
-      router.replace(route.query.redirect)
-    }
-  } catch (e) {
-    if (!silent) toast.error('登录失败', e.response?.data?.detail || e.message)
-    throw e
-  } finally {
-    loggingId.value = null
-  }
-}
-
 async function activateRemoteNodeAction(row) {
   try {
     await activateRemoteNode(row.id)
-    await loadRemoteNodes()
+    nodesStore.setActive(`remote-${row.id}`)
+    authStore.restoreFromNode(nodesStore.activeNode)
     toast.success(`已设为当前节点：${row.name}`)
+    await loadRemoteNodes()
   } catch (e) {
     toast.error('设置失败', e.response?.data?.detail || e.message)
   }
@@ -381,6 +285,13 @@ function isRemoteNodeLoggedIn(row) {
 
 function isRemoteNodeActive(row) {
   return nodesStore.activeNodeId === `remote-${row.id}`
+}
+
+// 本地节点
+function setActiveLocal(node) {
+  nodesStore.setActive(node.id)
+  authStore.restoreFromNode(node)
+  toast.success(`已切换到节点：${node.name}`)
 }
 
 onMounted(() => {
@@ -438,7 +349,7 @@ onMounted(() => {
             v-if="localNodeRecord && localNodeRecord.id !== nodesStore.activeNodeId"
             variant="ghost"
             size="sm"
-            @click="setActive(localNodeRecord)"
+            @click="setActiveLocal(localNodeRecord)"
           >
             设为当前
           </Button>
@@ -447,7 +358,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- 远程节点（统一管理） -->
+    <!-- 远程节点 -->
     <div class="flex flex-col gap-3">
       <div class="flex items-center gap-2">
         <Server class="h-4 w-4 text-muted-foreground" />
@@ -473,10 +384,8 @@ onMounted(() => {
               <TableHead>名称</TableHead>
               <TableHead>URL</TableHead>
               <TableHead class="w-[100px]">用户名</TableHead>
-              <TableHead class="w-[80px]">状态</TableHead>
-              <TableHead class="w-[110px]">连接</TableHead>
-              <TableHead class="w-[80px]">登录</TableHead>
-              <TableHead class="w-[280px]">操作</TableHead>
+              <TableHead class="w-[120px]">状态</TableHead>
+              <TableHead class="w-[200px]">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -487,10 +396,6 @@ onMounted(() => {
               <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.url }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.username }}</TableCell>
-              <TableCell>
-                <Badge v-if="row.enabled" variant="success">启用</Badge>
-                <Badge v-else variant="secondary">禁用</Badge>
-              </TableCell>
               <TableCell>
                 <div v-if="nodeHealth[row.id]?.checking" class="flex items-center gap-1">
                   <Loader2 class="h-3 w-3 animate-spin" />
@@ -520,10 +425,6 @@ onMounted(() => {
                 <span v-else class="text-xs text-muted-foreground">—</span>
               </TableCell>
               <TableCell>
-                <Badge v-if="isRemoteNodeLoggedIn(row)" variant="success">已登录</Badge>
-                <Badge v-else variant="secondary">未登录</Badge>
-              </TableCell>
-              <TableCell>
                 <div class="flex flex-wrap items-center gap-1">
                   <Button
                     v-if="isRemoteNodeLoggedIn(row) && !isRemoteNodeActive(row)"
@@ -533,36 +434,6 @@ onMounted(() => {
                   >
                     <Star class="h-4 w-4" />
                     设为当前
-                  </Button>
-                  <Button
-                    v-if="!isRemoteNodeLoggedIn(row)"
-                    variant="ghost"
-                    size="sm"
-                    :disabled="loggingId === row.id"
-                    @click="loginRemoteNodeAction(row)"
-                  >
-                    <Loader2 v-if="loggingId === row.id" class="h-4 w-4 animate-spin" />
-                    <LogIn v-else class="h-4 w-4" />
-                    登录
-                  </Button>
-                  <Button
-                    v-if="isRemoteNodeLoggedIn(row)"
-                    variant="ghost"
-                    size="sm"
-                    @click="onLogout(nodesStore.nodes.find((n) => n.id === `remote-${row.id}`))"
-                  >
-                    <LogOut class="h-4 w-4" />
-                    登出
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    :disabled="testingNodeId === row.id"
-                    @click="testRemoteNodeConnection(row)"
-                  >
-                    <Loader2 v-if="testingNodeId === row.id" class="h-4 w-4 animate-spin" />
-                    <Zap v-else class="h-4 w-4" />
-                    测试
                   </Button>
                   <Button variant="ghost" size="sm" @click="openEditRemoteNode(row)">
                     <Pencil class="h-4 w-4" />
@@ -593,7 +464,7 @@ onMounted(() => {
             {{ isEditingRemoteNode ? '编辑远程节点' : '添加远程节点' }}
           </DialogTitle>
           <DialogDescription>
-            配置远程 eta_node 实例的连接信息。节点可用于浏览曲库和下载推送。
+            配置远程 eta_node 实例的连接信息。保存时会自动验证登录，登录成功才会保留。
           </DialogDescription>
         </DialogHeader>
 
@@ -644,14 +515,6 @@ onMounted(() => {
             </div>
             <Switch v-model:checked="remoteNodeForm.verify_ssl" />
           </div>
-
-          <div class="flex items-center justify-between gap-3">
-            <div class="flex flex-col gap-1">
-              <Label>启用</Label>
-              <p class="text-xs text-muted-foreground">禁用后下载插件不会使用此节点。</p>
-            </div>
-            <Switch v-model:checked="remoteNodeForm.enabled" />
-          </div>
         </div>
 
         <DialogFooter class="gap-2">
@@ -663,7 +526,5 @@ onMounted(() => {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-
-    <NodeForm v-model:visible="formVisible" :node="editingNode" :preset="presetNode" @saved="onSaved" />
   </div>
 </template>
