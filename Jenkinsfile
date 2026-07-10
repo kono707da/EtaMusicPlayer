@@ -36,7 +36,7 @@ pipeline {
                         configName: 'hongkong',
                         transfers: [
                             sshTransfer(
-                                execCommand: "docker pull ${IMAGE_LATEST} && docker stop etamusic 2>/dev/null || true && docker rm etamusic 2>/dev/null || true && docker run -d --name etamusic --restart unless-stopped -p 8000:8000 -v etamusic-web-data:/app/web/backend/data -v etamusic-node-data:/app/node/data -v etamusic-plugins-data:/app/data -e TZ=Asia/Shanghai ${IMAGE_LATEST}"
+                                execCommand: "docker pull ${IMAGE_LATEST} && docker stop etamusic 2>/dev/null || true && docker rm etamusic 2>/dev/null || true && docker run -d --name etamusic --restart unless-stopped -p 8000:8000 -v etamusic-web-data:/app/web/backend/data -v etamusic-node-data:/app/node/data -v etamusic-plugins-data:/app/data -v etamusic-deps:/app/deps -e TZ=Asia/Shanghai ${IMAGE_LATEST}"
                             )
                         ]
                     )
