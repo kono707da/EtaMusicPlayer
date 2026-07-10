@@ -65,6 +65,11 @@ const editingRemoteNodeId = ref(null)
 const remoteNodeSaving = ref(false)
 const testingNodeId = ref(null)
 
+// 自动健康检测状态：nodeId -> { status, message, checking }
+// status: 'checking' | 'online' | 'offline' | 'auth_failed' | ''
+const nodeHealth = reactive({})
+const autoChecking = ref(false)
+
 const remoteNodeForm = reactive({
   name: '',
   url: '',
@@ -82,11 +87,56 @@ async function loadRemoteNodes() {
   remoteNodeLoading.value = true
   try {
     remoteNodeList.value = await listRemoteNodes()
+    // 加载完成后自动健康检测
+    autoCheckAllHealth()
   } catch (e) {
     toast.error('加载远程节点失败', e.response?.data?.detail || e.message)
   } finally {
     remoteNodeLoading.value = false
   }
+}
+
+// 对单个节点执行健康检测
+// success=true => online；连接失败 => offline；认证失败 => auth_failed
+async function checkOneHealth(row, { silent = false } = {}) {
+  nodeHealth[row.id] = { status: 'checking', message: '', checking: true }
+  try {
+    const result = await testRemoteNode(row.id)
+    if (result.success) {
+      nodeHealth[row.id] = { status: 'online', message: result.message, checking: false }
+      // 测试通过且未登录，自动静默登录
+      if (!isRemoteNodeLoggedIn(row)) {
+        try {
+          await loginRemoteNodeAction(row, { silent: true })
+        } catch { /* 登录失败不阻塞健康检测展示 */ }
+      }
+    } else {
+      const msg = result.message || ''
+      // 区分离线 vs 认证失败
+      const isAuth = /认证失败|HTTP 4\d\d|401|403/.test(msg)
+      nodeHealth[row.id] = {
+        status: isAuth ? 'auth_failed' : 'offline',
+        message: msg,
+        checking: false
+      }
+      if (!silent) {
+        toast.error('连接测试失败', msg)
+      }
+    }
+  } catch (e) {
+    const msg = e.response?.data?.detail || e.message
+    nodeHealth[row.id] = { status: 'offline', message: msg, checking: false }
+    if (!silent) toast.error('连接测试失败', msg)
+  }
+}
+
+// 进入页面自动并行检测所有节点
+async function autoCheckAllHealth() {
+  if (remoteNodeList.value.length === 0) return
+  autoChecking.value = true
+  // 并行检测，每个节点独立处理，互不阻塞
+  await Promise.allSettled(remoteNodeList.value.map((row) => checkOneHealth(row, { silent: true })))
+  autoChecking.value = false
 }
 
 function openAddRemote() {
@@ -262,20 +312,17 @@ async function confirmDeleteRemoteNode(row) {
 async function testRemoteNodeConnection(row) {
   testingNodeId.value = row.id
   try {
-    const result = await testRemoteNode(row.id)
-    if (result.success) {
-      toast.success('连接测试成功', result.message)
-    } else {
-      toast.error('连接测试失败', result.message)
+    await checkOneHealth(row)
+    const h = nodeHealth[row.id]
+    if (h && h.status === 'online') {
+      toast.success('连接测试成功', h.message)
     }
-  } catch (e) {
-    toast.error('连接测试失败', e.response?.data?.detail || e.message)
   } finally {
     testingNodeId.value = null
   }
 }
 
-async function loginRemoteNodeAction(row) {
+async function loginRemoteNodeAction(row, { silent = false } = {}) {
   loggingId.value = row.id
   try {
     const result = await loginRemoteNode(row.id)
@@ -306,12 +353,13 @@ async function loginRemoteNodeAction(row) {
     nodesStore.setActive(nodeData.id)
     nodesStore.authVersion++
     authStore.restoreFromNode(nodesStore.activeNode)
-    toast.success(`已登录节点：${row.name}`)
+    if (!silent) toast.success(`已登录节点：${row.name}`)
     if (route.query.redirect) {
       router.replace(route.query.redirect)
     }
   } catch (e) {
-    toast.error('登录失败', e.response?.data?.detail || e.message)
+    if (!silent) toast.error('登录失败', e.response?.data?.detail || e.message)
+    throw e
   } finally {
     loggingId.value = null
   }
@@ -345,10 +393,17 @@ onMounted(() => {
   <div class="flex flex-col gap-6">
     <div class="flex items-center justify-between">
       <h2 class="text-2xl font-bold tracking-tight text-gold-gradient">节点管理</h2>
-      <Button @click="openAddRemoteNode">
-        <Plus class="h-4 w-4" />
-        添加远程节点
-      </Button>
+      <div class="flex items-center gap-2">
+        <Button variant="outline" size="sm" :disabled="autoChecking || remoteNodeLoading" @click="autoCheckAllHealth">
+          <Loader2 v-if="autoChecking" class="h-4 w-4 animate-spin" />
+          <Zap v-else class="h-4 w-4" />
+          重新检测
+        </Button>
+        <Button @click="openAddRemoteNode">
+          <Plus class="h-4 w-4" />
+          添加远程节点
+        </Button>
+      </div>
     </div>
 
     <!-- 本地节点卡片 -->
@@ -419,8 +474,9 @@ onMounted(() => {
               <TableHead>URL</TableHead>
               <TableHead class="w-[100px]">用户名</TableHead>
               <TableHead class="w-[80px]">状态</TableHead>
+              <TableHead class="w-[110px]">连接</TableHead>
               <TableHead class="w-[80px]">登录</TableHead>
-              <TableHead class="w-[320px]">操作</TableHead>
+              <TableHead class="w-[280px]">操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -434,6 +490,34 @@ onMounted(() => {
               <TableCell>
                 <Badge v-if="row.enabled" variant="success">启用</Badge>
                 <Badge v-else variant="secondary">禁用</Badge>
+              </TableCell>
+              <TableCell>
+                <div v-if="nodeHealth[row.id]?.checking" class="flex items-center gap-1">
+                  <Loader2 class="h-3 w-3 animate-spin" />
+                  <span class="text-xs text-muted-foreground">检测中</span>
+                </div>
+                <span
+                  v-else-if="nodeHealth[row.id]?.status === 'online'"
+                  class="inline-flex items-center gap-1 text-xs text-emerald-500 font-medium"
+                  :title="nodeHealth[row.id].message"
+                >
+                  ● 在线
+                </span>
+                <span
+                  v-else-if="nodeHealth[row.id]?.status === 'auth_failed'"
+                  class="inline-flex items-center gap-1 text-xs text-amber-500 font-medium"
+                  :title="nodeHealth[row.id].message"
+                >
+                  ● 认证失败
+                </span>
+                <span
+                  v-else-if="nodeHealth[row.id]?.status === 'offline'"
+                  class="inline-flex items-center gap-1 text-xs text-destructive font-medium"
+                  :title="nodeHealth[row.id].message"
+                >
+                  ● 离线
+                </span>
+                <span v-else class="text-xs text-muted-foreground">—</span>
               </TableCell>
               <TableCell>
                 <Badge v-if="isRemoteNodeLoggedIn(row)" variant="success">已登录</Badge>
