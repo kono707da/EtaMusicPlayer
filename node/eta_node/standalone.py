@@ -36,6 +36,12 @@ def create_standalone_app() -> FastAPI:
 
     bootstrap()
 
+    # 启动任务执行器（单线程任务队列）
+    from eta_node.task_executor import start_executor
+
+    start_executor()
+    logger.info("任务执行器已启动")
+
     local_app = create_local_node_app()
     app.mount("/", local_app)
 

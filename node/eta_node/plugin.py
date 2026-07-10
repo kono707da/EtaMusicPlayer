@@ -22,6 +22,7 @@ from eta_node.models import DedupConfig, Playlist, User, SYSTEM_PLAYLIST_ALL, SY
 from eta_node.dedup import DEFAULT_FIELDS, DEFAULT_DURATION_TOLERANCE
 
 from eta_node.routers import (
+    audit,
     auth,
     dedup,
     inbox,
@@ -30,6 +31,8 @@ from eta_node.routers import (
     playlists,
     quality,
     scan,
+    stats,
+    tasks,
     tracks,
     upload,
     users,
@@ -152,6 +155,9 @@ def create_local_node_app() -> FastAPI:
     sub_app.include_router(dedup.router)
     sub_app.include_router(quality.router)
     sub_app.include_router(metadata.router)
+    sub_app.include_router(tasks.router)
+    sub_app.include_router(audit.router)
+    sub_app.include_router(stats.router)
 
     @sub_app.get("/health", tags=["root"])
     def local_health() -> dict:
@@ -166,7 +172,13 @@ def register(app) -> None:
     # 1. 启动初始化（建表、admin、系统播放列表）
     bootstrap()
 
-    # 2. 创建并挂载子应用
+    # 2. 启动任务执行器（单线程任务队列）
+    from eta_node.task_executor import start_executor
+
+    start_executor()
+    logger.info("任务执行器已启动")
+
+    # 3. 创建并挂载子应用
     local_app = create_local_node_app()
     app.mount("/local_node", local_app)
 

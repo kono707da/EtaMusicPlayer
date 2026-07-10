@@ -4,11 +4,16 @@
 
 本地节点（local_node）：同进程直调 eta_node 数据库和函数
 远程节点：通过 HTTP API 调用 eta_node standalone 服务
+
+节点自治架构：所有写操作通过任务队列串行执行。
+- trigger_scan 返回 task_id，通过 get_task_status 轮询
+- save_file 可选使用 staging + task 模式
 """
 from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -72,7 +77,30 @@ class NodeClient:
         """保存文件到节点，返回 saved_to 路径"""
         raise NotImplementedError
 
-    def trigger_scan(self, watch_dir_id: Optional[int] = None) -> bool:
+    def trigger_scan(self, watch_dir_id: Optional[int] = None) -> Optional[int]:
+        """触发扫描，返回 task_id（用于轮询状态），失败返回 None"""
+        raise NotImplementedError
+
+    def get_task_status(self, task_id: int) -> Optional[dict]:
+        """查询任务状态，返回 {status, progress, result, error_message, ...}"""
+        raise NotImplementedError
+
+    def wait_for_task(
+        self, task_id: int, timeout: float = 300, poll_interval: float = 2
+    ) -> Optional[dict]:
+        """等待任务完成，返回最终状态 dict，超时返回 None"""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status = self.get_task_status(task_id)
+            if status is None:
+                return None
+            if status.get("status") in ("completed", "failed", "cancelled"):
+                return status
+            time.sleep(poll_interval)
+        return None
+
+    def record_play_event(self, track_id: int, event_type: str) -> bool:
+        """上报播放事件 (play/skip/complete)"""
         raise NotImplementedError
 
     def create_playlist(
@@ -163,29 +191,93 @@ class LocalNodeClient(NodeClient):
         shutil.copy2(source_path, target)
         return str(target)
 
-    def trigger_scan(self, watch_dir_id: Optional[int] = None) -> bool:
+    def trigger_scan(self, watch_dir_id: Optional[int] = None) -> Optional[int]:
+        """提交扫描任务到任务队列，返回 task_id"""
         from eta_node.database import SessionLocal
-        from eta_node.models import ScanTask
-        from eta_node.scanner import run_scan
+        from eta_node.models import NodeTask
 
         db = SessionLocal()
         try:
-            task = ScanTask(status="pending", started_at=datetime.utcnow())
+            task = NodeTask(
+                task_type="scan",
+                status="pending",
+                priority=-10,
+                payload={"watch_dir_id": watch_dir_id},
+            )
             db.add(task)
             db.commit()
             db.refresh(task)
-            task_id = task.id
-            db.close()
-            run_scan(task_id, watch_dir_id=watch_dir_id)
-            return True
+            logger.info("local_node 扫描任务已提交: #%d (watch_dir_id=%s)", task.id, watch_dir_id)
+            return task.id
         except Exception as e:
             logger.warning("触发 local_node 扫描失败: %s", e)
+            return None
+        finally:
+            db.close()
+
+    def get_task_status(self, task_id: int) -> Optional[dict]:
+        """查询任务状态"""
+        from eta_node.database import SessionLocal
+        from eta_node.models import NodeTask
+
+        db = SessionLocal()
+        try:
+            task = db.get(NodeTask, task_id)
+            if task is None:
+                return None
+            return {
+                "id": task.id,
+                "task_type": task.task_type,
+                "status": task.status,
+                "progress": task.progress,
+                "result": task.result,
+                "error_message": task.error_message,
+                "started_at": task.started_at.isoformat() if task.started_at else None,
+                "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+            }
+        finally:
+            db.close()
+
+    def record_play_event(self, track_id: int, event_type: str) -> bool:
+        """上报播放事件（本地直调）"""
+        from eta_node.database import SessionLocal
+        from eta_node.models import Track, TrackStats, UserPlayStats
+        from datetime import datetime as _dt
+
+        db = SessionLocal()
+        try:
+            track = db.get(Track, track_id)
+            if track is None:
+                return False
+
+            now = _dt.utcnow()
+
+            stats = (
+                db.query(TrackStats)
+                .filter(TrackStats.track_id == track_id)
+                .one_or_none()
+            )
+            if stats is None:
+                stats = TrackStats(track_id=track_id, imported_at=track.created_at or now)
+                db.add(stats)
+                db.flush()
+
+            if event_type == "play":
+                stats.total_play_count += 1
+                stats.last_played_at = now
+            elif event_type == "skip":
+                stats.total_skip_count += 1
+            elif event_type == "complete":
+                stats.total_complete_count += 1
+
+            db.commit()
+            return True
+        except Exception as e:
+            logger.warning("local_node 记录播放事件失败: %s", e)
+            db.rollback()
             return False
         finally:
-            try:
-                db.close()
-            except Exception:
-                pass
+            db.close()
 
     def find_tracks_by_paths(self, paths: list[str]) -> list[int]:
         from eta_node.inbox import find_tracks_by_paths as _find
@@ -401,13 +493,39 @@ class RemoteNodeClient(NodeClient):
         result = resp.json()
         return result.get("saved_to", "")
 
-    def trigger_scan(self, watch_dir_id: Optional[int] = None) -> bool:
+    def trigger_scan(self, watch_dir_id: Optional[int] = None) -> Optional[int]:
+        """提交扫描任务，返回 task_id"""
         try:
-            payload = {"watch_dir_id": watch_dir_id} if watch_dir_id else {}
+            payload = {"watch_dir_id": watch_dir_id}
             resp = self._request("POST", "/api/scan", json=payload)
-            return resp.status_code == 201
+            data = resp.json()
+            task_id = data.get("id")
+            logger.info("远程扫描任务已提交: #%s", task_id)
+            return task_id
         except Exception as e:
             logger.warning("远程触发扫描失败: %s", e)
+            return None
+
+    def get_task_status(self, task_id: int) -> Optional[dict]:
+        """查询任务状态"""
+        try:
+            resp = self._request("GET", f"/api/tasks/{task_id}")
+            return resp.json()
+        except Exception as e:
+            logger.warning("远程查询任务状态失败: %s", e)
+            return None
+
+    def record_play_event(self, track_id: int, event_type: str) -> bool:
+        """上报播放事件"""
+        try:
+            resp = self._request(
+                "POST",
+                "/api/stats/play",
+                json={"track_id": track_id, "event_type": event_type},
+            )
+            return resp.json().get("ok", False)
+        except Exception as e:
+            logger.warning("远程上报播放事件失败: %s", e)
             return False
 
     def find_tracks_by_paths(self, paths: list[str]) -> list[int]:

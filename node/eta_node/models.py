@@ -5,12 +5,14 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -223,7 +225,7 @@ class DedupConfig(Base):
 
 
 class ScanTask(Base):
-    """扫描任务"""
+    """扫描任务（保留向后兼容，新代码使用 NodeTask）"""
 
     __tablename__ = "scan_tasks"
 
@@ -238,6 +240,108 @@ class ScanTask(Base):
     new_tracks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_tracks: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
+
+
+class NodeTask(Base):
+    """节点通用任务（单线程任务队列）
+
+    所有写操作通过任务队列串行执行，避免并发数据库写入冲突。
+    访问端只提交任务请求，节点自主调度执行。
+    """
+
+    __tablename__ = "node_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_type: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True,
+        comment="scan|upload|playlist_add|playlist_remove|playlist_reorder|"
+                "metadata_update|metadata_rename|watch_dir_create|watch_dir_update|"
+                "watch_dir_delete|user_create|user_update|user_delete|"
+                "permission_grant|permission_revoke|dedup_update",
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), default="pending", nullable=False, index=True,
+        comment="pending|running|completed|failed|cancelled",
+    )
+    priority: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, index=True,
+        comment="10=用户交互, 0=默认, -10=后台任务",
+    )
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    submitted_by: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, comment="提交者用户名"
+    )
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False, index=True
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class AuditLog(Base):
+    """审计日志：记录何时哪个访问端用哪个用户做了什么重要操作"""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False, index=True
+    )
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    username: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    client_ip: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    detail: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    task_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+
+class TrackStats(Base):
+    """曲目统计：文件元数据之外的统计数据"""
+
+    __tablename__ = "track_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    total_play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_skip_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_complete_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_played_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_played_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+
+
+class UserPlayStats(Base):
+    """用户播放统计：每个用户对每首曲目的播放记录"""
+
+    __tablename__ = "user_play_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    track_id: Mapped[int] = mapped_column(
+        ForeignKey("tracks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    play_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    skip_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    complete_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    first_played_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_played_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "track_id", name="uq_userplaystats_user_track"),
+    )
 
 
 # 系统播放列表名称常量

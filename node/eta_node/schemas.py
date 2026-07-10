@@ -154,6 +154,40 @@ class ScanTaskOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ----------------------------- NodeTask -----------------------------
+class TaskSubmitRequest(BaseModel):
+    """提交任务请求"""
+    task_type: str = Field(..., description="scan|upload|playlist_add|...")
+    priority: int = Field(default=0, description="10=用户交互, 0=默认, -10=后台")
+    payload: Optional[dict] = Field(default=None, description="任务参数 JSON")
+
+
+class NodeTaskOut(BaseModel):
+    """任务状态响应"""
+    id: int
+    task_type: str
+    status: str
+    priority: int
+    payload: Optional[dict] = None
+    result: Optional[dict] = None
+    error_message: Optional[str] = None
+    progress: int = 0
+    submitted_by: Optional[str] = None
+    submitted_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class NodeTaskList(BaseModel):
+    """任务列表（分页）"""
+    total: int
+    page: int
+    size: int
+    items: list[NodeTaskOut]
+
+
 # ----------------------------- Users -----------------------------
 class UserCreate(BaseModel):
     username: str

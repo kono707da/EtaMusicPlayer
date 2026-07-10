@@ -28,6 +28,7 @@ class NodeSettings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8001
     db_path: str = "data/etamusic.db"
+    staging_dir: str = "data/staging"
     scan_workers: int = 2
     default_admin_password: str = "admin123"
     jwt_secret: str = "change-me-in-production"
@@ -39,6 +40,13 @@ class NodeSettings(BaseSettings):
     @property
     def db_absolute_path(self) -> Path:
         p = Path(self.db_path)
+        if p.is_absolute():
+            return p
+        return Path(__file__).resolve().parent.parent / p
+
+    @property
+    def staging_absolute_path(self) -> Path:
+        p = Path(self.staging_dir)
         if p.is_absolute():
             return p
         return Path(__file__).resolve().parent.parent / p

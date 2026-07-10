@@ -5,7 +5,7 @@ import os
 import string
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from eta_node.database import get_db
 from eta_node.deps import require_admin
 from eta_node.models import Track, User, WatchDir
 from eta_node.schemas import WatchDirCreate, WatchDirOut, WatchDirUpdate
+from eta_node.task_executor import write_audit_log
 
 
 router = APIRouter(prefix="/api/watch-dirs", tags=["watch-dirs"])
@@ -111,6 +112,7 @@ def browse_directory(
 @router.post("", response_model=WatchDirOut, status_code=201)
 def create_watch_dir(
     payload: WatchDirCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ) -> WatchDirOut:
@@ -127,6 +129,14 @@ def create_watch_dir(
     db.add(wd)
     db.commit()
     db.refresh(wd)
+    write_audit_log(
+        db,
+        user_id=user.id, username=user.username,
+        client_ip=request.client.host if request.client else None,
+        action="watch_dir_create", target_type="watch_dir", target_id=wd.id,
+        detail={"path": abs_path, "recursive": payload.recursive},
+    )
+    db.commit()
     return _to_out(wd)
 
 
@@ -134,6 +144,7 @@ def create_watch_dir(
 def update_watch_dir(
     watch_dir_id: int,
     payload: WatchDirUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ) -> WatchDirOut:
@@ -141,18 +152,31 @@ def update_watch_dir(
     wd = db.get(WatchDir, watch_dir_id)
     if wd is None:
         raise HTTPException(status_code=404, detail="监控目录不存在")
+    changes = {}
     if payload.recursive is not None:
         wd.recursive = payload.recursive
+        changes["recursive"] = payload.recursive
     if payload.enabled is not None:
         wd.enabled = payload.enabled
+        changes["enabled"] = payload.enabled
     db.commit()
     db.refresh(wd)
+    if changes:
+        write_audit_log(
+            db,
+            user_id=user.id, username=user.username,
+            client_ip=request.client.host if request.client else None,
+            action="watch_dir_update", target_type="watch_dir", target_id=wd.id,
+            detail={"path": wd.path, "changes": changes},
+        )
+        db.commit()
     return _to_out(wd)
 
 
 @router.delete("/{watch_dir_id}", status_code=204)
 def delete_watch_dir(
     watch_dir_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
@@ -160,9 +184,19 @@ def delete_watch_dir(
     wd = db.get(WatchDir, watch_dir_id)
     if wd is None:
         raise HTTPException(status_code=404, detail="监控目录不存在")
+    deleted_path = wd.path
+    track_count = db.query(Track).filter(Track.watch_dir_id == watch_dir_id).count()
     # 删除关联 Track（PlaylistItem 通过外键级联删除）
     db.query(Track).filter(Track.watch_dir_id == watch_dir_id).delete(
         synchronize_session=False
     )
     db.delete(wd)
+    db.commit()
+    write_audit_log(
+        db,
+        user_id=user.id, username=user.username,
+        client_ip=request.client.host if request.client else None,
+        action="watch_dir_delete", target_type="watch_dir", target_id=watch_dir_id,
+        detail={"path": deleted_path, "deleted_tracks": track_count},
+    )
     db.commit()
