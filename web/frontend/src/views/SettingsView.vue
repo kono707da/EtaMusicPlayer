@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { Save, Loader2, Settings, Headphones, Music, RefreshCw, Download, ScrollText } from 'lucide-vue-next'
+import { Save, Loader2, Settings, Headphones, Music, RefreshCw, Download, ScrollText, Eraser } from 'lucide-vue-next'
 import { usePluginsStore } from '../stores/plugins'
 import { useNodesStore } from '../stores/nodes'
 import { getSystemLogs } from '../api/plugin'
@@ -86,6 +86,11 @@ function downloadLogs() {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+function clearLogDisplay() {
+  logText.value = ''
+  logMeta.value = { file_path: logMeta.value.file_path, file_size: logMeta.value.file_size, exists: logMeta.value.exists, total_returned: 0 }
 }
 
 function formatSize(bytes) {
@@ -266,6 +271,10 @@ onMounted(() => {
               <Button variant="outline" size="sm" :disabled="logLoading || !logText" @click="downloadLogs">
                 <Download class="h-4 w-4" />
                 下载
+              </Button>
+              <Button variant="outline" size="sm" :disabled="logLoading || !logText" @click="clearLogDisplay">
+                <Eraser class="h-4 w-4" />
+                清空显示
               </Button>
             </div>
           </div>

@@ -46,7 +46,8 @@ _LINE_LEVEL_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}[,.]?\d*\s*\[(
 def _read_tail_lines(path: Path, max_lines: int) -> list[str]:
     """从文件读取最后 max_lines 行（保留原始顺序）。
 
-    日志文件由 RotatingFileHandler 管理，单份最大 2MB，全量读取开销可控。
+    日志文件由 TimedRotatingFileHandler 管理，按天轮转保留 30 天。
+    当前活跃文件即 eta_web.log，全量读取开销可控。
     使用 deque(maxlen=max_lines) 自动保留尾部，避免一次性加载全部到列表。
     """
     if not path.exists():
@@ -89,7 +90,7 @@ def get_logs(
 ) -> dict:
     """读取最近 N 行日志，支持按级别过滤。
 
-    日志文件位于 web/backend/data/logs/eta_web.log（RotatingFileHandler，2MB x 5 份）。
+    日志文件位于 web/backend/data/logs/eta_web.log（TimedRotatingFileHandler，按天轮转保留 30 天）。
     前端用于排查错误时获取后端运行日志。
     """
     level_upper = (level or "ALL").upper()

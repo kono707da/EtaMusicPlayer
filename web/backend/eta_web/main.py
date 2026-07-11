@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,13 +32,13 @@ LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "logs")
 LOG_FILE = os.path.join(LOG_DIR, "eta_web.log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# 根日志配置：控制台 + 轮转文件（单份 2MB，保留 5 份）
+# 根日志配置：控制台 + 按天轮转文件（保留 30 天）
 _logging_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_logging_fmt)
 
-_file_handler = RotatingFileHandler(
-    LOG_FILE, maxBytes=2 * 1024 * 1024, backupCount=5, encoding="utf-8"
+_file_handler = TimedRotatingFileHandler(
+    LOG_FILE, when="midnight", interval=1, backupCount=30, encoding="utf-8"
 )
 _file_handler.setFormatter(_logging_fmt)
 
