@@ -18,11 +18,13 @@ pipeline {
 
         stage('Build Image') {
             steps {
+                // 诊断 docker 环境（重装 Jenkins 后确认版本和 buildx 是否可用）
+                sh 'docker version || true'
+                sh 'docker buildx version 2>/dev/null || echo "buildx not installed"'
                 // 清理旧镜像，避免 tag 指向残留的 manifest list
                 sh "docker rmi ${IMAGE_NAME} ${IMAGE_TAG} ${IMAGE_LATEST} 2>/dev/null || true"
-                // --load 让 buildx 把完整镜像加载到本地 docker image store（普通 manifest，非 manifest list）
-                // --platform 显式指定单平台，避免多平台 manifest list
-                sh "docker buildx build --platform linux/amd64 --load -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
+                // 内联 DOCKER_BUILDKIT=0 强制禁用 BuildKit，用经典 builder 生成普通 manifest（非 manifest list）
+                sh "DOCKER_BUILDKIT=0 docker build -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
             }
         }
 
