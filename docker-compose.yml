@@ -1,6 +1,6 @@
 services:
   etamusic:
-    image: 192.168.188.18:5000/etamusic:${IMAGE_TAG:-latest}
+    image: ${REGISTRY:-registry}/etamusic:${IMAGE_TAG:-latest}
     container_name: etamusic
     restart: unless-stopped
     ports:
