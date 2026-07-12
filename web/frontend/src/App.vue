@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
-  Search, User, Library, ListMusic, Settings, RefreshCw,
+  Search, User, Library, Settings, RefreshCw,
   Wand2, Copy, TrendingUp, Network, Users, ChevronDown, ChevronRight, Package,
   ListChecks, ScrollText, BarChart3, SlidersHorizontal
 } from 'lucide-vue-next'
@@ -41,7 +41,6 @@ const searchKeyword = computed({
 // 核心导航（始终显示）
 const coreNavItems = [
   { path: '/library', label: '工作台', icon: Library },
-  { path: '/playlists', label: '播放列表', icon: ListMusic },
   { path: '/nodes', label: '节点设置', icon: Settings },
   { path: '/plugins', label: '插件管理', icon: Package },
   { path: '/settings', label: '设置', icon: SlidersHorizontal }
@@ -91,9 +90,7 @@ const adminNavItems = [
 ]
 
 const currentPath = computed(() => route.path)
-const showTree = computed(() =>
-  currentPath.value === '/library' || currentPath.value === '/playlists'
-)
+const showTree = computed(() => currentPath.value === '/library')
 
 function onSearch() {
   if (!searchKeyword.value.trim()) return

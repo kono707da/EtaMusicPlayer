@@ -31,8 +31,7 @@ const routes = [
   },
   {
     path: '/playlists',
-    name: 'playlists',
-    component: lazy(() => import('../views/PlaylistsView.vue'))
+    redirect: '/library'
   },
   {
     path: '/nodes',
