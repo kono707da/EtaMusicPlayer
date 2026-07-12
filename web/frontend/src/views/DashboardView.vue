@@ -10,17 +10,17 @@ import {
   RefreshCw, Loader2, Music, Play, SkipForward, CheckCircle,
   TrendingUp, Calendar, Users, Clock
 } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { getDashboard } from '../api/node'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 
 const dashboard = ref(null)
 const loading = ref(false)
 
 async function loadDashboard() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node || !node.token) return
   loading.value = true
   try {

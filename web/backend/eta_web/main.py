@@ -23,7 +23,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from eta_web.plugins import load_plugins
 from eta_web.plugins_manager.routers import router as plugins_router, set_loaded_plugins
+from eta_web.plugins_manager.database import init_db
 from eta_web.system_routes import router as system_router
+from eta_web.client_playlists.routers import router as client_playlists_router
 
 logger = logging.getLogger("eta_web")
 
@@ -60,8 +62,9 @@ _loaded_plugins: list[str] = []
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期：启动时加载插件"""
+    """应用生命周期：启动时建表 + 加载插件"""
     global _loaded_plugins
+    init_db()
     _loaded_plugins = load_plugins(app)
     set_loaded_plugins(_loaded_plugins)
     if _loaded_plugins:
@@ -96,6 +99,7 @@ app.add_middleware(
 
 app.include_router(plugins_router)
 app.include_router(system_router)
+app.include_router(client_playlists_router)
 
 
 @app.get("/health", tags=["root"])

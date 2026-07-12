@@ -17,7 +17,7 @@ import {
   TableCell
 } from '@/components/ui/table'
 import { RefreshCw, Loader2, Plus, Trash2, Play, FolderOpen } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import {
   triggerScan,
   getScanStatus,
@@ -27,7 +27,7 @@ import {
 } from '../api/node'
 import PathPickerDialog from '@/components/PathPickerDialog.vue'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -49,7 +49,7 @@ function onPathPicked(p) {
 
 // 拉取最近一次任务状态（如有 task_id 缓存）
 async function refreshTask() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node || !lastTask.value?.id) return
   try {
     lastTask.value = await getScanStatus(node, lastTask.value.id)
@@ -59,7 +59,7 @@ async function refreshTask() {
 }
 
 async function refreshDirs() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   loading.value = true
   try {
@@ -73,7 +73,7 @@ async function refreshDirs() {
 }
 
 async function onTrigger(watchDirId) {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   triggering.value = true
   try {
     // 后端同步执行扫描，请求返回时扫描已完成
@@ -96,7 +96,7 @@ async function onAddDir() {
     toast.warning('请输入目录路径')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   try {
     await addWatchDir(node, {
       path: newDir.value.path,
@@ -117,7 +117,7 @@ async function onRemoveDir(row) {
     { title: '移除目录', type: 'danger' }
   )
   if (!ok) return
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   try {
     await deleteWatchDir(node, row.id)
     toast.success('已移除')
@@ -312,7 +312,7 @@ function taskTagVariant(status) {
     <!-- 路径选择对话框 -->
     <PathPickerDialog
       v-model:open="pathPickerOpen"
-      :node="nodesStore.activeNode"
+      :node="authStore.localNode"
       title="选择监控目录"
       @select="onPathPicked"
     />

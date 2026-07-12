@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { useNodesStore } from '../stores/nodes'
 import { useAuthStore } from '../stores/auth'
 
 /**
@@ -121,10 +120,8 @@ router.beforeEach((to, _from, next) => {
   if (!to.meta.requiresAdmin) {
     return next()
   }
-  // 需要管理员权限：检查当前激活节点是否已登录且为 admin
-  const nodesStore = useNodesStore()
+  // 需要管理员权限：检查本地节点是否已登录且为 admin
   const authStore = useAuthStore()
-  authStore.restoreFromNode(nodesStore.activeNode)
   if (!authStore.isLoggedIn) {
     next({ path: '/nodes', query: { redirect: to.fullPath } })
     return

@@ -1,10 +1,13 @@
 <script setup>
 import { computed, ref, watch, nextTick, onUnmounted } from 'vue'
-import { Check, Loader2, Play, Plus, Columns3, Music, Pencil } from 'lucide-vue-next'
+import { Check, Loader2, Play, Plus, Columns3, Music, Pencil, ListMusic } from 'lucide-vue-next'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { usePlayerStore } from '../stores/player'
-import { useNodesStore } from '../stores/nodes'
-import { getCoverUrl, updateMetadataField } from '../api/node'
+import { useAuthStore } from '../stores/auth'
+import { useLibraryStore } from '../stores/library'
+import { getCoverUrl, updateMetadataField, addTracksToPlaylist } from '../api/node'
+import { addClientPlaylistItems } from '../api/client_playlist'
+import AddToPlaylistDialog from './AddToPlaylistDialog.vue'
 import MetadataPanel from './MetadataPanel.vue'
 import {
   Table,
@@ -44,7 +47,12 @@ const emit = defineEmits([
 
 const player = usePlayerStore()
 const toast = useToast()
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
+const libraryStore = useLibraryStore()
+
+// 加入到播放列表对话框
+const addToPlaylistVisible = ref(false)
+const addToPlaylistTracks = ref([])
 
 // ==================== 列配置 ====================
 
@@ -226,14 +234,12 @@ function selectAll() {
 // 必须传 idx（相对于 tableData 的下标 = 相对于 props.tracks 的下标）
 function onRowDblclick(row, idx) {
   emit('row-dblclick', row)
-  const nodeId = row.__nodeId || props.nodeId
-  const nodeName = row.__nodeName || props.nodeName
-  if (nodeId == null) {
+  if (row.__nodeId == null) {
     toast.warning('缺少来源节点信息', '无法播放')
     return
   }
   const startIndex = (idx != null && idx >= 0) ? idx : 0
-  player.playTracks(props.tracks, nodeId, nodeName, startIndex)
+  player.playTracks(props.tracks, startIndex)
 }
 
 // ==================== 右键菜单 ====================
@@ -263,11 +269,22 @@ function closeContextMenu() {
 function addToQueue() {
   const row = contextMenu.value.row
   if (!row) return
-  const nodeId = row.__nodeId || props.nodeId
-  const nodeName = row.__nodeName || props.nodeName
-  player.appendTracks([row], nodeId, nodeName)
+  player.appendTracks([row])
   toast.success('已加入播放队列')
   closeContextMenu()
+}
+
+// 右键：加入到播放列表
+function addToPlaylist() {
+  const tracks = selection.value.length > 0 ? selection.value : [contextMenu.value.row]
+  addToPlaylistTracks.value = tracks.filter(Boolean)
+  addToPlaylistVisible.value = true
+  closeContextMenu()
+}
+
+function onAddToPlaylistDone() {
+  addToPlaylistVisible.value = false
+  toast.success('已添加到播放列表')
 }
 
 // 右键：播放此曲
@@ -314,7 +331,7 @@ function isInlineEditing(row, colKey) {
 
 function startInlineEdit(row, colKey, event) {
   // 仅 admin 可编辑
-  if (!nodesStore.activeNode?.userInfo?.is_admin) {
+  if (!authStore.isAdmin) {
     toast.warning('需要管理员权限', '只有管理员可以编辑元数据')
     return
   }
@@ -351,7 +368,7 @@ async function commitInlineEdit(row) {
     return
   }
 
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) {
     toast.error('编辑失败', '未连接节点')
     inlineEdit.value = { rowId: null, field: null, value: '', saving: false }
@@ -724,7 +741,17 @@ function onCoverError(e) {
         添加到播放队列
       </li>
       <li
-        v-if="nodesStore.activeNode?.userInfo?.is_admin"
+        class="flex cursor-pointer items-center gap-2 rounded px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        @click="addToPlaylist"
+      >
+        <ListMusic class="h-4 w-4" />
+        加入到播放列表
+        <span v-if="selection.length > 1" class="ml-auto text-[10px] text-muted-foreground/60">
+          {{ selection.length }} 首
+        </span>
+      </li>
+      <li
+        v-if="authStore.isAdmin"
         class="flex cursor-pointer items-center gap-2 rounded px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         @click="editMetadata"
       >
@@ -735,6 +762,13 @@ function onCoverError(e) {
         </span>
       </li>
     </ul>
+
+    <!-- 加入到播放列表对话框 -->
+    <AddToPlaylistDialog
+      v-model:visible="addToPlaylistVisible"
+      :tracks="addToPlaylistTracks"
+      @added="onAddToPlaylistDone"
+    />
 
     <!-- 元数据批量编辑抽屉 -->
     <MetadataPanel

@@ -21,14 +21,14 @@ import {
   TableCell
 } from '@/components/ui/table'
 import { Loader2, TrendingUp, Search, Replace, Inbox, Sparkles } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import {
   getPlaylists,
   detectQualityUpgrades,
   applyQualityReplace
 } from '../api/node'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 
 const playlists = ref([])
@@ -42,7 +42,7 @@ const detecting = ref(false)
 const replacing = ref(false)
 
 async function loadPlaylists() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   try {
     const data = await getPlaylists(node)
@@ -57,7 +57,7 @@ async function onDetect() {
     toast.warning('请选择播放列表')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   detecting.value = true
   selectedUpgrade.value = null
   selectedNewTrackId.value = null
@@ -82,7 +82,7 @@ async function onReplace() {
     toast.warning('请选择要替换成的高音质版本')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   replacing.value = true
   try {
     await applyQualityReplace(

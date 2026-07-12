@@ -72,10 +72,6 @@ export const usePluginsStore = defineStore('plugins', () => {
           })
           nodesStore.updateNode(added.id, { token, userInfo })
         }
-        if (!nodesStore.activeNodeId) {
-          const target = nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
-          if (target) nodesStore.setActive(target.id)
-        }
       }
 
       return status

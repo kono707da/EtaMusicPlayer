@@ -22,7 +22,7 @@ import {
   TableCell
 } from '@/components/ui/table'
 import { Loader2, Network, ShieldCheck, ShieldOff, Shield, Inbox } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import {
   getPlaylists,
   getUsers,
@@ -31,7 +31,7 @@ import {
   revokePermission
 } from '../api/node'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 
 const playlists = ref([])
@@ -41,7 +41,7 @@ const permissions = ref([]) // 当前播放列表已授权用户
 const loading = ref(false)
 
 async function loadPlaylists() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   try {
     const data = await getPlaylists(node)
@@ -52,7 +52,7 @@ async function loadPlaylists() {
 }
 
 async function loadUsers() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   try {
     const data = await getUsers(node)
@@ -64,7 +64,7 @@ async function loadUsers() {
 
 async function loadPermissions() {
   if (!selectedPlaylistId.value) return
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   loading.value = true
   try {
     // 后端 GET /api/permissions?playlist_id=，返回 PermissionOut 列表（含 id, user_id）
@@ -82,7 +82,7 @@ watch(selectedPlaylistId, () => {
 })
 
 async function onGrant(userId) {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   try {
     await grantPermission(node, selectedPlaylistId.value, userId)
     toast.success('已授权')
@@ -99,7 +99,7 @@ async function onRevoke(userId) {
     toast.warning('未找到授权记录')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   try {
     await revokePermission(node, perm.id)
     toast.success('已撤销')

@@ -54,13 +54,17 @@ export const usePlayerStore = defineStore('player', () => {
 
   /**
    * 加载并播放当前曲目
+   * 支持跨节点：每条曲目自带 __nodeId / __nodeName
    */
   function loadCurrent() {
     if (!current.value) return
     const nodesStore = useNodesStore()
-    const node = nodesStore.nodes.find((n) => n.id === current.value.nodeId)
-    if (!node) {
-      toast.error('找不到来源节点')
+    const nodeId = current.value.nodeId
+    const node = nodesStore.getNode(nodeId)
+    if (!node || !node.token) {
+      // 节点不可用：标记停止，由用户手动跳过（避免自动跳过递归）
+      toast.error(`节点「${node?.name || nodeId}」不可用，无法播放`)
+      isPlaying.value = false
       return
     }
     const url = getStreamUrl(node, current.value.track.id)
@@ -111,23 +115,31 @@ export const usePlayerStore = defineStore('player', () => {
 
   /**
    * 将一组曲目加入播放队列（替换队列）并播放
+   * 跨节点：每条曲目自带 __nodeId / __nodeName
    * @param {Array} tracks 曲目数组
-   * @param {Number} nodeId 来源节点 id
-   * @param {String} nodeName 来源节点名称
    * @param {Number} startIndex 从第几首开始播放
    */
-  function playTracks(tracks, nodeId, nodeName, startIndex = 0) {
+  function playTracks(tracks, startIndex = 0) {
     if (!tracks || tracks.length === 0) return
-    queue.value = tracks.map((t) => ({ track: t, nodeId, nodeName }))
+    queue.value = tracks.map((t) => ({
+      track: t,
+      nodeId: t.__nodeId,
+      nodeName: t.__nodeName || ''
+    }))
     currentIndex.value = startIndex
     loadCurrent()
   }
 
   /**
    * 追加到队列末尾（不切换播放）
+   * 跨节点：每条曲目自带 __nodeId / __nodeName
    */
-  function appendTracks(tracks, nodeId, nodeName) {
-    const items = tracks.map((t) => ({ track: t, nodeId, nodeName }))
+  function appendTracks(tracks) {
+    const items = tracks.map((t) => ({
+      track: t,
+      nodeId: t.__nodeId,
+      nodeName: t.__nodeName || ''
+    }))
     queue.value.push(...items)
     if (currentIndex.value < 0 && queue.value.length > 0) {
       currentIndex.value = 0

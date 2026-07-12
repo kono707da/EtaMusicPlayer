@@ -10,10 +10,10 @@ import {
 } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
 import { RefreshCw, Loader2, Search } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { getAuditLogs } from '../api/node'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 
 const logs = ref([])
@@ -39,7 +39,7 @@ const actionLabels = {
 const totalPages = computed(() => Math.ceil(total.value / size.value) || 1)
 
 async function loadLogs() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node || !node.token) return
   loading.value = true
   try {

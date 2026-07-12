@@ -7,65 +7,89 @@ import {
   getPlaylists,
   getPlaylistDetail
 } from '../api/node'
+import {
+  listClientPlaylists,
+  listClientPlaylistItems
+} from '../api/client_playlist'
 
 const toast = useToast()
 
 /**
- * 聚合曲库
- * - 维护当前激活节点的播放列表树
- * - 维护当前展示的曲目列表（某播放列表 / 全部音乐 / 搜索结果）
- * - 跨节点搜索：对所有"已登录"节点并发调 /api/tracks?q=，合并结果
- * - 监听 nodesStore.authVersion：节点登录/登出/切换时自动刷新
+ * 聚合曲库（多节点架构）
+ *
+ * 不依赖 activeNode。聚合所有已登录节点的内容：
+ * - nodePlaylists: 每个节点的播放列表（含该节点的系统"收集箱"）
+ * - clientPlaylists: 客户端播放列表（存在 eta_web 后端，可跨节点）
+ *
+ * 视图模式：
+ * - 'all'              客户端"全部音乐"（聚合所有节点曲目）
+ * - 'node-all'         某节点的"全部音乐"
+ * - 'node-playlist'    某节点的播放列表（含节点"收集箱"）
+ * - 'client-playlist'  客户端播放列表
+ * - 'search'           跨节点搜索结果
+ * - 'empty'            无内容
+ *
+ * 每条曲目都带 __nodeId / __nodeName，供播放器从正确节点取流。
  */
 export const useLibraryStore = defineStore('library', () => {
   const nodesStore = useNodesStore()
 
   const keyword = ref('')
-  const playlists = ref([]) // 当前激活节点的播放列表
+  // 各节点的播放列表：{ [nodeId]: playlists[] }
+  const nodePlaylists = ref({})
+  // 客户端播放列表（eta_web 后端）
+  const clientPlaylists = ref([])
+
   const tracks = ref([]) // 当前展示的曲目
   const tracksTotal = ref(0)
   const loading = ref(false)
   const searchResults = ref([]) // 跨节点搜索结果 [{track, nodeId, nodeName}]
   const searchLoading = ref(false)
 
-  // 当前展示模式：'all' | 'playlist' | 'search' | 'empty'
+  // 当前展示模式
   const mode = ref('empty')
-  const currentPlaylistId = ref(null)
+  const currentNodeId = ref(null) // node-* 模式下的节点 id
+  const currentPlaylistId = ref(null) // playlist 模式下的播放列表 id
+  const currentPlaylistType = ref(null) // 'node' | 'client'
   const page = ref(1)
   const pageSize = ref(20)
 
   /**
-   * 当前激活节点是否已登录
+   * 刷新所有已登录节点的播放列表 + 客户端播放列表
    */
-  function activeNodeLoggedIn() {
-    const node = nodesStore.activeNode
-    return !!(node && node.token)
-  }
+  async function refreshAllPlaylists() {
+    const loggedIn = nodesStore.loggedInNodes
+    // 并发拉取每个节点的播放列表
+    const nodeResults = await Promise.allSettled(
+      loggedIn.map(async (n) => {
+        const data = await getPlaylists(n)
+        const items = Array.isArray(data) ? data : data.items || []
+        return { nodeId: n.id, playlists: items }
+      })
+    )
+    const map = {}
+    nodeResults.forEach((r) => {
+      if (r.status === 'fulfilled') {
+        map[r.value.nodeId] = r.value.playlists
+      }
+    })
+    nodePlaylists.value = map
 
-  /**
-   * 刷新当前激活节点的播放列表（仅当已登录）
-   */
-  async function refreshPlaylists() {
-    const node = nodesStore.activeNode
-    if (!node || !node.token) {
-      playlists.value = []
-      return
-    }
+    // 拉取客户端播放列表
     try {
-      const data = await getPlaylists(node)
-      playlists.value = Array.isArray(data) ? data : data.items || []
+      clientPlaylists.value = await listClientPlaylists()
     } catch (e) {
-      playlists.value = []
-      toast.error('获取播放列表失败：' + (e.message || e))
+      toast.error('获取客户端播放列表失败', e)
+      clientPlaylists.value = []
     }
   }
 
   /**
-   * 加载全部曲目（一次性拉取，不分页）
+   * 加载客户端"全部音乐"：聚合所有已登录节点的全部曲目
    */
   async function loadAllTracks() {
-    const node = nodesStore.activeNode
-    if (!node || !node.token) {
+    const loggedIn = nodesStore.loggedInNodes
+    if (loggedIn.length === 0) {
       tracks.value = []
       tracksTotal.value = 0
       mode.value = 'empty'
@@ -73,24 +97,30 @@ export const useLibraryStore = defineStore('library', () => {
     }
     loading.value = true
     try {
-      // 一次性拉取全部曲目（后端 size 上限已放宽到 100000）
-      const data = await getTracks(node, {
-        page: 1,
-        size: 100000,
-        q: keyword.value || undefined
+      const q = keyword.value || undefined
+      const results = await Promise.allSettled(
+        loggedIn.map(async (n) => {
+          const data = await getTracks(n, { page: 1, size: 100000, q })
+          const items = data.items || data.tracks || []
+          return items.map((t) => ({
+            ...t,
+            __nodeId: t.__nodeId ?? n.id,
+            __nodeName: t.__nodeName ?? n.name
+          }))
+        })
+      )
+      const merged = []
+      results.forEach((r) => {
+        if (r.status === 'fulfilled') merged.push(...r.value)
       })
-      const items = data.items || data.tracks || []
-      // 给每条曲目标记来源节点，供封面/播放等场景使用
-      tracks.value = items.map((t) => ({
-        ...t,
-        __nodeId: t.__nodeId ?? node.id,
-        __nodeName: t.__nodeName ?? node.name
-      }))
-      tracksTotal.value = data.total || tracks.value.length
+      tracks.value = merged
+      tracksTotal.value = merged.length
       mode.value = 'all'
+      currentNodeId.value = null
       currentPlaylistId.value = null
+      currentPlaylistType.value = null
     } catch (e) {
-      toast.error('获取曲目失败：' + (e.message || e))
+      toast.error('获取曲目失败', e)
       tracks.value = []
       tracksTotal.value = 0
     } finally {
@@ -99,10 +129,10 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
-   * 加载某播放列表的曲目
+   * 加载某节点的"全部音乐"
    */
-  async function loadPlaylistTracks(playlistId) {
-    const node = nodesStore.activeNode
+  async function loadNodeAllTracks(nodeId) {
+    const node = nodesStore.getNode(nodeId)
     if (!node || !node.token) {
       tracks.value = []
       tracksTotal.value = 0
@@ -111,7 +141,44 @@ export const useLibraryStore = defineStore('library', () => {
     }
     loading.value = true
     try {
-      // 后端 GET /api/playlists/{id} 返回 PlaylistDetail，含 items 数组（每项有 track 对象）
+      const data = await getTracks(node, {
+        page: 1,
+        size: 100000,
+        q: keyword.value || undefined
+      })
+      const items = data.items || data.tracks || []
+      tracks.value = items.map((t) => ({
+        ...t,
+        __nodeId: t.__nodeId ?? node.id,
+        __nodeName: t.__nodeName ?? node.name
+      }))
+      tracksTotal.value = data.total || tracks.value.length
+      mode.value = 'node-all'
+      currentNodeId.value = nodeId
+      currentPlaylistId.value = null
+      currentPlaylistType.value = null
+    } catch (e) {
+      toast.error('获取节点曲目失败', e)
+      tracks.value = []
+      tracksTotal.value = 0
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * 加载某节点的播放列表曲目（含节点"收集箱"）
+   */
+  async function loadNodePlaylistTracks(nodeId, playlistId) {
+    const node = nodesStore.getNode(nodeId)
+    if (!node || !node.token) {
+      tracks.value = []
+      tracksTotal.value = 0
+      mode.value = 'empty'
+      return
+    }
+    loading.value = true
+    try {
       const data = await getPlaylistDetail(node, playlistId)
       const items = data.items || []
       tracks.value = items
@@ -123,10 +190,51 @@ export const useLibraryStore = defineStore('library', () => {
           __nodeName: t.__nodeName ?? node.name
         }))
       tracksTotal.value = tracks.value.length
-      mode.value = 'playlist'
+      mode.value = 'node-playlist'
+      currentNodeId.value = nodeId
       currentPlaylistId.value = playlistId
+      currentPlaylistType.value = 'node'
     } catch (e) {
-      toast.error('获取播放列表曲目失败：' + (e.message || e))
+      toast.error('获取播放列表曲目失败', e)
+      tracks.value = []
+      tracksTotal.value = 0
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * 加载客户端播放列表曲目（跨节点）
+   * 曲目元数据已缓存在 eta_web 后端，但流地址仍需从来源节点获取。
+   */
+  async function loadClientPlaylistTracks(playlistId) {
+    loading.value = true
+    try {
+      const items = await listClientPlaylistItems(playlistId)
+      // 给每条曲目标注来源节点（节点失效则 __nodeOffline = true）
+      tracks.value = items.map((it) => {
+        const node = nodesStore.getNode(Number(it.node_id))
+        const online = !!(node && node.token)
+        return {
+          id: it.track_id,
+          title: it.title,
+          artist: it.artist,
+          album: it.album,
+          duration: it.duration,
+          __nodeId: Number(it.node_id),
+          __nodeName: node?.name || `节点 ${it.node_id}`,
+          __nodeOffline: !online,
+          __clientItemId: it.id,
+          __position: it.position
+        }
+      })
+      tracksTotal.value = tracks.value.length
+      mode.value = 'client-playlist'
+      currentNodeId.value = null
+      currentPlaylistId.value = playlistId
+      currentPlaylistType.value = 'client'
+    } catch (e) {
+      toast.error('获取客户端播放列表曲目失败', e)
       tracks.value = []
       tracksTotal.value = 0
     } finally {
@@ -136,7 +244,6 @@ export const useLibraryStore = defineStore('library', () => {
 
   /**
    * 跨节点搜索
-   * 对所有"已登录"节点并发调 /api/tracks?q=，合并结果
    */
   async function globalSearch(q) {
     if (!q) return
@@ -173,11 +280,6 @@ export const useLibraryStore = defineStore('library', () => {
 
   function setPage(p) {
     page.value = p
-    if (mode.value === 'playlist' && currentPlaylistId.value) {
-      loadPlaylistTracks(currentPlaylistId.value)
-    } else if (mode.value === 'all') {
-      loadAllTracks()
-    }
   }
 
   function resetPaging() {
@@ -185,35 +287,16 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
-   * 监听节点登录/登出/删除事件，自动刷新当前激活节点的播放列表
+   * 监听节点登录/登出/删除事件，自动刷新所有播放列表
    */
   watch(
     () => nodesStore.authVersion,
     () => {
-      refreshPlaylists().then(() => {
-        // 登录后自动加载全部音乐
-        if (activeNodeLoggedIn() && mode.value === 'empty') {
+      refreshAllPlaylists().then(() => {
+        // 登录后若当前为空视图，自动加载客户端"全部音乐"
+        if (mode.value === 'empty' && nodesStore.loggedInNodes.length > 0) {
           loadAllTracks()
-        } else if (!activeNodeLoggedIn()) {
-          tracks.value = []
-          tracksTotal.value = 0
-          mode.value = 'empty'
-        }
-      })
-    }
-  )
-
-  /**
-   * 监听激活节点切换
-   */
-  watch(
-    () => nodesStore.activeNodeId,
-    () => {
-      refreshPlaylists().then(() => {
-        if (activeNodeLoggedIn()) {
-          resetPaging()
-          loadAllTracks()
-        } else {
+        } else if (nodesStore.loggedInNodes.length === 0) {
           tracks.value = []
           tracksTotal.value = 0
           mode.value = 'empty'
@@ -224,19 +307,24 @@ export const useLibraryStore = defineStore('library', () => {
 
   return {
     keyword,
-    playlists,
+    nodePlaylists,
+    clientPlaylists,
     tracks,
     tracksTotal,
     loading,
     searchResults,
     searchLoading,
     mode,
+    currentNodeId,
     currentPlaylistId,
+    currentPlaylistType,
     page,
     pageSize,
-    refreshPlaylists,
+    refreshAllPlaylists,
     loadAllTracks,
-    loadPlaylistTracks,
+    loadNodeAllTracks,
+    loadNodePlaylistTracks,
+    loadClientPlaylistTracks,
     globalSearch,
     setPage,
     resetPaging

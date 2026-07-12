@@ -10,10 +10,10 @@ import {
 } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
 import { RefreshCw, Loader2, X, Clock, Activity } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { listTasks, cancelTask } from '../api/node'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -64,7 +64,7 @@ const taskTypeLabels = {
 const totalPages = computed(() => Math.ceil(total.value / size.value) || 1)
 
 async function loadTasks() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node || !node.token) return
   loading.value = true
   try {
@@ -85,7 +85,7 @@ async function onCancel(task) {
   const ok = await confirm(`确定取消任务 #${task.id} 吗？`, { title: '取消任务', type: 'warning' })
   if (!ok) return
   try {
-    await cancelTask(nodesStore.activeNode, task.id)
+    await cancelTask(authStore.localNode, task.id)
     toast.success('任务已取消')
     loadTasks()
   } catch (e) {

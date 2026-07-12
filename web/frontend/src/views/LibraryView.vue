@@ -2,7 +2,6 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNodesStore } from '../stores/nodes'
-import { useAuthStore } from '../stores/auth'
 import { useLibraryStore } from '../stores/library'
 import { usePlayerStore } from '../stores/player'
 import { usePluginsStore } from '../stores/plugins'
@@ -14,7 +13,6 @@ import { Files, RefreshCw, ListPlus, Play, Network, HardDrive } from 'lucide-vue
 
 const router = useRouter()
 const nodesStore = useNodesStore()
-const authStore = useAuthStore()
 const libraryStore = useLibraryStore()
 const player = usePlayerStore()
 const pluginsStore = usePluginsStore()
@@ -49,15 +47,13 @@ function onPageChange(p) {
   libraryStore.setPage(p)
 }
 
-// 播放全部
+// 播放全部（跨节点：每条曲目自带 __nodeId）
 function playAll() {
   if (libraryStore.tracks.length === 0) {
     toast.warning('当前曲目列表为空')
     return
   }
-  const node = nodesStore.activeNode
-  if (!node) return
-  player.playTracks(libraryStore.tracks, node.id, node.name, 0)
+  player.playTracks(libraryStore.tracks, 0)
 }
 
 // 把选中曲目加入队列
@@ -66,10 +62,17 @@ function addSelectedToQueue() {
     toast.warning('请先选择曲目')
     return
   }
-  const node = nodesStore.activeNode
-  if (!node) return
-  player.appendTracks(selectedTracks.value, node.id, node.name)
+  player.appendTracks(selectedTracks.value)
   toast.success(`已加入 ${selectedTracks.value.length} 首到播放队列`)
+}
+
+// 刷新当前视图
+function refreshCurrent() {
+  if (libraryStore.mode === 'search') {
+    libraryStore.globalSearch(libraryStore.keyword)
+  } else if (libraryStore.mode === 'all' || libraryStore.mode === 'empty') {
+    libraryStore.loadAllTracks()
+  }
 }
 
 function goNodes() {
@@ -81,19 +84,9 @@ function goPlugins() {
 }
 
 onMounted(async () => {
-  // 若已有激活且已登录的节点，自动加载全部音乐
-  if (hasLoggedInNode.value && nodesStore.activeNode?.token) {
-    libraryStore.refreshPlaylists()
-    libraryStore.loadAllTracks()
-  } else {
-    // 探测本地节点状态（用于空状态显示引导）
+  // 若无已登录节点，探测本地节点状态（用于空状态引导）
+  if (!hasLoggedInNode.value) {
     await pluginsStore.syncLocalNode(nodesStore)
-    // 同步后若本地节点已自动连接，加载曲库
-    if (hasLoggedInNode.value && nodesStore.activeNode?.token) {
-      authStore.restoreFromNode(nodesStore.activeNode)
-      libraryStore.refreshPlaylists()
-      libraryStore.loadAllTracks()
-    }
   }
 })
 
@@ -123,7 +116,7 @@ watch(
         </h2>
       </div>
       <div class="flex items-center gap-2">
-        <Button variant="secondary" size="sm" @click="libraryStore.refresh()">
+        <Button variant="secondary" size="sm" @click="refreshCurrent">
           <RefreshCw class="h-4 w-4" />
           刷新
         </Button>
@@ -145,8 +138,6 @@ watch(
         :loading="libraryStore.loading"
         :show-source="showSource"
         :show-pagination="false"
-        :node-id="nodesStore.activeNode?.id"
-        :node-name="nodesStore.activeNode?.name"
         :total="libraryStore.tracksTotal"
         :page="libraryStore.page"
         :page-size="libraryStore.pageSize"

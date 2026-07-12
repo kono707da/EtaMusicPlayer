@@ -7,7 +7,6 @@ import './styles/main.css'
 
 import { usePluginsStore } from './stores/plugins'
 import { useNodesStore } from './stores/nodes'
-import { useAuthStore } from './stores/auth'
 import { getPluginRoutes } from './plugins'
 
 /**
@@ -32,14 +31,8 @@ import { getPluginRoutes } from './plugins'
 
   // 同步本地节点到 nodes store（插件启用即自动连接）
   const nodesStore = useNodesStore(pinia)
-  const authStore = useAuthStore(pinia)
   await nodesStore.load()
   await pluginsStore.syncLocalNode(nodesStore)
-
-  // 恢复激活节点的认证状态
-  if (nodesStore.activeNode) {
-    authStore.restoreFromNode(nodesStore.activeNode)
-  }
 
   // 动态注册插件路由
   const pluginRoutes = getPluginRoutes(pluginsStore.enabledNames)
