@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        REGISTRY      = '192.168.188.18:5000'
         IMAGE_NAME    = 'etamusic'
+        REGISTRY      = credentials('docker-registry-url')
         IMAGE_TAG     = "${REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER}"
         IMAGE_LATEST  = "${REGISTRY}/${IMAGE_NAME}:latest"
     }
