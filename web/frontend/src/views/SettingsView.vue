@@ -9,13 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { Save, Loader2, Settings, Headphones, Music, RefreshCw, Download, ScrollText, Eraser } from 'lucide-vue-next'
 import { usePluginsStore } from '../stores/plugins'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { getSystemLogs } from '../api/plugin'
 
 // 插件 API 采用动态 import：插件未启用时不会加载其模块代码
 const toast = useToast()
 const pluginsStore = usePluginsStore()
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 
 // ============ Tab 管理 ============
 const activeTab = ref('system')
@@ -125,7 +125,7 @@ async function loadAsmrSettings() {
       cache_pool_size_mb: data.cache_pool_size_mb ?? '500'
     }
     // 尝试加载监控目录列表
-    const node = nodesStore.activeNode
+    const node = authStore.localNode
     if (node) {
       try {
         const { listWatchDirs } = await import('../api/node')

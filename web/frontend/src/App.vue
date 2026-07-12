@@ -1,9 +1,9 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   Search, User, Library, ListMusic, Settings, RefreshCw,
-  Wand2, Copy, TrendingUp, Network, Users, LogOut, ChevronDown, ChevronRight, Package,
+  Wand2, Copy, TrendingUp, Network, Users, ChevronDown, ChevronRight, Package,
   ListChecks, ScrollText, BarChart3, SlidersHorizontal
 } from 'lucide-vue-next'
 import PlaylistTree from './components/PlaylistTree.vue'
@@ -11,10 +11,7 @@ import PlayerBar from './components/PlayerBar.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
 import { Toaster } from '@/components/ui/toast'
 import { useToast } from '@/components/ui/toast/use-toast'
-import { useConfirm } from '@/composables/use-confirm'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { useNodesStore } from './stores/nodes'
 import { useAuthStore } from './stores/auth'
@@ -30,19 +27,16 @@ const authStore = useAuthStore()
 const libraryStore = useLibraryStore()
 const pluginsStore = usePluginsStore()
 const toast = useToast()
-const { confirm } = useConfirm()
 
-const activeNode = computed(() => nodesStore.activeNode)
 const userInfo = computed(() => authStore.userInfo)
-const isAdmin = computed(() => !!userInfo.value?.is_admin)
+const isAdmin = computed(() => authStore.isAdmin)
 const isLoggedIn = computed(() => authStore.isLoggedIn)
+const loggedInCount = computed(() => nodesStore.loggedInNodes.length)
 
 const searchKeyword = computed({
   get: () => libraryStore.keyword,
   set: (v) => (libraryStore.keyword = v || '')
 })
-
-const switchableNodes = computed(() => nodesStore.loggedInNodes)
 
 // 核心导航（始终显示）
 const coreNavItems = [
@@ -101,47 +95,16 @@ const showTree = computed(() =>
   currentPath.value === '/library' || currentPath.value === '/playlists'
 )
 
-function onNodeChange(nodeId) {
-  nodesStore.setActive(nodeId)
-  authStore.restoreFromNode(nodesStore.activeNode)
-}
-
-async function onSearch() {
+function onSearch() {
   if (!searchKeyword.value.trim()) return
-  try {
-    await libraryStore.globalSearch(searchKeyword.value.trim())
-    router.push('/library')
-  } catch (e) {
-    toast.error('搜索失败', e.message || String(e), e)
-  }
+  libraryStore.globalSearch(searchKeyword.value.trim())
+    .then(() => router.push('/library'))
+    .catch((e) => toast.error('搜索失败', e.message || String(e), e))
 }
 
 function go(path) {
   router.push(path)
 }
-
-async function onLogoutNode() {
-  if (!activeNode.value) return
-  const ok = await confirm(
-    `确定要登出当前节点「${activeNode.value.name}」吗？配置保留，可重新登录。`,
-    { title: '登出节点', type: 'warning' }
-  )
-  if (!ok) return
-  nodesStore.logoutNode(activeNode.value.id)
-  authStore.restoreFromNode(nodesStore.activeNode)
-  toast.success('已登出')
-  if (!nodesStore.activeNode) {
-    router.push('/nodes')
-  }
-}
-
-watch(
-  () => nodesStore.activeNodeId,
-  () => {
-    authStore.restoreFromNode(nodesStore.activeNode)
-  },
-  { immediate: true }
-)
 
 // 启动时自动刷新远程节点 token（后端重启后 token 可能失效）
 onMounted(async () => {
@@ -181,7 +144,6 @@ async function refreshRemoteTokens() {
       })
     )
     nodesStore.authVersion++
-    authStore.restoreFromNode(nodesStore.activeNode)
   } catch (e) {
     // 获取远程节点列表失败，静默处理
     console.error('刷新远程节点 token 失败:', e)
@@ -201,18 +163,13 @@ async function refreshRemoteTokens() {
         <span class="text-lg font-bold tracking-tight text-gold-gradient">EtaMusic</span>
       </div>
 
-      <!-- 节点切换器 -->
-      <div class="w-48">
-        <Select :model-value="activeNode?.id" @update:model-value="onNodeChange">
-          <SelectTrigger class="h-9 bg-secondary/60 border-border">
-            <SelectValue placeholder="未登录任何节点" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="n in switchableNodes" :key="n.id" :value="n.id">
-              {{ n.name }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
+      <!-- 节点状态指示 -->
+      <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span
+          class="h-2 w-2 rounded-full"
+          :class="loggedInCount > 0 ? 'bg-emerald-500' : 'bg-muted-foreground/40'"
+        ></span>
+        <span>{{ loggedInCount > 0 ? `${loggedInCount} 个节点在线` : '无节点在线' }}</span>
       </div>
 
       <!-- 搜索框 -->
@@ -237,13 +194,9 @@ async function refreshRemoteTokens() {
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" class="min-w-[160px]">
-            <DropdownMenuItem v-if="isLoggedIn" @select="onLogoutNode">
-              <LogOut class="mr-2 h-4 w-4" />
-              登出当前节点
-            </DropdownMenuItem>
-            <DropdownMenuItem v-else @select="go('/nodes')">
+            <DropdownMenuItem @select="go('/nodes')">
               <Network class="mr-2 h-4 w-4" />
-              去登录节点
+              节点管理
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

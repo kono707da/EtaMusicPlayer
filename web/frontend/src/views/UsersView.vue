@@ -35,7 +35,7 @@ import {
   EyeOff,
   Inbox
 } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import {
   getUsers,
   createUser,
@@ -43,7 +43,7 @@ import {
   deleteUser
 } from '../api/node'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -60,7 +60,7 @@ const form = reactive({
 })
 
 async function loadUsers() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   loading.value = true
   try {
@@ -100,7 +100,7 @@ async function onSave() {
     toast.warning('请输入密码')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   try {
     if (editing.value) {
       const payload = { username: form.username, is_admin: form.is_admin }
@@ -128,7 +128,7 @@ async function onDelete(row) {
     type: 'danger'
   })
   if (!ok) return
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   try {
     await deleteUser(node, row.id)
     toast.success('已删除')

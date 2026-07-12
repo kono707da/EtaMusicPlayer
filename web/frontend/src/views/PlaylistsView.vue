@@ -1,7 +1,7 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useNodesStore } from '../stores/nodes'
-import { useLibraryStore } from '../stores/library'
+import { useAuthStore } from '../stores/auth'
 import {
   getPlaylists,
   createPlaylist,
@@ -12,11 +12,27 @@ import {
   addTracksToPlaylist,
   removeTracksFromPlaylist
 } from '../api/node'
+import {
+  listClientPlaylists,
+  createClientPlaylist,
+  updateClientPlaylist,
+  deleteClientPlaylist,
+  listClientPlaylistItems,
+  addClientPlaylistItems,
+  removeClientPlaylistItems
+} from '../api/client_playlist'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem
+} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -39,9 +55,12 @@ import { useConfirm } from '@/composables/use-confirm'
 import { Plus, RefreshCw, Loader2 } from 'lucide-vue-next'
 
 const nodesStore = useNodesStore()
-const libraryStore = useLibraryStore()
+const authStore = useAuthStore()
 const toast = useToast()
 const { confirm } = useConfirm()
+
+// 当前管理范围：'client' = 本机客户端播放列表，'remote-<id>' = 节点播放列表
+const selectedScope = ref('client')
 
 const playlists = ref([])
 const loading = ref(false)
@@ -53,7 +72,7 @@ const detailLoading = ref(false)
 
 // 创建/编辑对话框
 const dialogVisible = ref(false)
-const editing = ref(null) // 编辑中的播放列表对象
+const editing = ref(null)
 const form = ref({ name: '', description: '' })
 
 // 从曲库添加曲目对话框
@@ -65,15 +84,41 @@ const candidateLoading = ref(false)
 // 当前选中详情中的曲目
 const selectedDetailTracks = ref([])
 
+const isClientScope = computed(() => selectedScope.value === 'client')
+
+const scopeOptions = computed(() => {
+  const opts = [{ value: 'client', label: '本机（客户端）' }]
+  nodesStore.loggedInNodes.forEach((n) => {
+    opts.push({ value: n.id, label: n.name })
+  })
+  return opts
+})
+
+const currentNode = computed(() => {
+  if (isClientScope.value) return null
+  return nodesStore.getNode(selectedScope.value)
+})
+
+const isAdmin = computed(() => authStore.isAdmin)
+
 async function loadPlaylists() {
-  const node = nodesStore.activeNode
-  if (!node) return
   loading.value = true
   try {
-    const data = await getPlaylists(node)
-    playlists.value = Array.isArray(data) ? data : data.items || []
+    if (isClientScope.value) {
+      const data = await listClientPlaylists()
+      playlists.value = Array.isArray(data) ? data : data.items || []
+    } else {
+      const node = currentNode.value
+      if (!node) {
+        playlists.value = []
+        return
+      }
+      const data = await getPlaylists(node)
+      playlists.value = Array.isArray(data) ? data : data.items || []
+    }
   } catch (e) {
-    toast.error('获取播放列表失败', e.message || e, e)
+    toast.error('获取播放列表失败', e?.response?.data?.detail || e.message || e, e)
+    playlists.value = []
   } finally {
     loading.value = false
   }
@@ -86,15 +131,32 @@ async function viewDetail(pl) {
 
 async function loadDetail() {
   if (!currentPlaylist.value) return
-  const node = nodesStore.activeNode
   detailLoading.value = true
   try {
-    // 后端返回 PlaylistDetail，items 内每项含 track 对象
-    const data = await getPlaylistDetail(node, currentPlaylist.value.id)
-    const items = data.items || []
-    detailTracks.value = items.map((it) => it.track || it).filter(Boolean)
+    if (isClientScope.value) {
+      const items = await listClientPlaylistItems(currentPlaylist.value.id)
+      detailTracks.value = items.map((it) => ({
+        id: it.id,
+        track_id: it.track_id,
+        title: it.title,
+        artist: it.artist,
+        album: it.album,
+        duration: it.duration,
+        __clientItemId: it.id
+      }))
+    } else {
+      const node = currentNode.value
+      if (!node) {
+        detailTracks.value = []
+        return
+      }
+      const data = await getPlaylistDetail(node, currentPlaylist.value.id)
+      const items = data.items || []
+      detailTracks.value = items.map((it) => it.track || it).filter(Boolean)
+    }
   } catch (e) {
-    toast.error('获取曲目失败', e.message || e, e)
+    toast.error('获取曲目失败', e?.response?.data?.detail || e.message || e, e)
+    detailTracks.value = []
   } finally {
     detailLoading.value = false
   }
@@ -117,19 +179,33 @@ async function onSave() {
     toast.warning('请输入名称')
     return
   }
-  const node = nodesStore.activeNode
   try {
-    if (editing.value) {
-      await updatePlaylist(node, editing.value.id, form.value)
-      toast.success('已更新')
+    if (isClientScope.value) {
+      if (editing.value) {
+        await updateClientPlaylist(editing.value.id, form.value)
+        toast.success('已更新')
+      } else {
+        await createClientPlaylist(form.value.name, form.value.description)
+        toast.success('已创建')
+      }
     } else {
-      await createPlaylist(node, form.value)
-      toast.success('已创建')
+      const node = currentNode.value
+      if (!node) {
+        toast.error('节点未连接')
+        return
+      }
+      if (editing.value) {
+        await updatePlaylist(node, editing.value.id, form.value)
+        toast.success('已更新')
+      } else {
+        await createPlaylist(node, form.value)
+        toast.success('已创建')
+      }
     }
     dialogVisible.value = false
     await loadPlaylists()
   } catch (e) {
-    toast.error('保存失败', e.response?.data?.detail || e.message, e)
+    toast.error('保存失败', e?.response?.data?.detail || e.message, e)
   }
 }
 
@@ -143,9 +219,17 @@ async function onDelete(pl) {
     type: 'warning'
   })
   if (!ok) return
-  const node = nodesStore.activeNode
   try {
-    await deletePlaylist(node, pl.id)
+    if (isClientScope.value) {
+      await deleteClientPlaylist(pl.id)
+    } else {
+      const node = currentNode.value
+      if (!node) {
+        toast.error('节点未连接')
+        return
+      }
+      await deletePlaylist(node, pl.id)
+    }
     toast.success('已删除')
     if (currentPlaylist.value?.id === pl.id) {
       currentPlaylist.value = null
@@ -153,7 +237,7 @@ async function onDelete(pl) {
     }
     await loadPlaylists()
   } catch (e) {
-    toast.error('删除失败', e.response?.data?.detail || e.message, e)
+    toast.error('删除失败', e?.response?.data?.detail || e.message, e)
   }
 }
 
@@ -171,17 +255,26 @@ async function removeFromPlaylist() {
     { title: '提示', type: 'warning' }
   )
   if (!ok) return
-  const node = nodesStore.activeNode
   try {
-    await removeTracksFromPlaylist(
-      node,
-      currentPlaylist.value.id,
-      selectedDetailTracks.value.map((t) => t.id)
-    )
+    if (isClientScope.value) {
+      const itemIds = selectedDetailTracks.value.map((t) => t.__clientItemId || t.id)
+      await removeClientPlaylistItems(currentPlaylist.value.id, itemIds)
+    } else {
+      const node = currentNode.value
+      if (!node) {
+        toast.error('节点未连接')
+        return
+      }
+      await removeTracksFromPlaylist(
+        node,
+        currentPlaylist.value.id,
+        selectedDetailTracks.value.map((t) => t.id)
+      )
+    }
     toast.success('已移除')
     await loadDetail()
   } catch (e) {
-    toast.error('移除失败', e.message || e, e)
+    toast.error('移除失败', e?.response?.data?.detail || e.message || e, e)
   }
 }
 
@@ -194,11 +287,37 @@ async function openAddDialog() {
   addDialogVisible.value = true
   candidateLoading.value = true
   try {
-    const node = nodesStore.activeNode
-    const data = await getTracks(node, { page: 1, page_size: 100 })
-    candidateTracks.value = data.items || data.tracks || []
+    if (isClientScope.value) {
+      // 客户端播放列表：聚合所有已登录节点的曲目
+      const loggedIn = nodesStore.loggedInNodes
+      const results = await Promise.allSettled(
+        loggedIn.map(async (n) => {
+          const data = await getTracks(n, { page: 1, page_size: 200 })
+          const items = data.items || data.tracks || []
+          return items.map((t) => ({
+            ...t,
+            __nodeId: n.id,
+            __nodeName: n.name
+          }))
+        })
+      )
+      const merged = []
+      results.forEach((r) => {
+        if (r.status === 'fulfilled') merged.push(...r.value)
+      })
+      candidateTracks.value = merged
+    } else {
+      const node = currentNode.value
+      if (!node) {
+        candidateTracks.value = []
+        return
+      }
+      const data = await getTracks(node, { page: 1, page_size: 100 })
+      candidateTracks.value = data.items || data.tracks || []
+    }
   } catch (e) {
-    toast.error('加载曲库失败', e.message || e, e)
+    toast.error('加载曲库失败', e?.response?.data?.detail || e.message || e, e)
+    candidateTracks.value = []
   } finally {
     candidateLoading.value = false
   }
@@ -209,31 +328,47 @@ async function addCandidates() {
     toast.warning('请选择要添加的曲目')
     return
   }
-  const node = nodesStore.activeNode
   try {
-    await addTracksToPlaylist(
-      node,
-      currentPlaylist.value.id,
-      selectedCandidate.value.map((t) => t.id)
-    )
+    if (isClientScope.value) {
+      const items = selectedCandidate.value.map((t) => ({
+        track_id: t.id,
+        node_id: t.__nodeId,
+        title: t.title,
+        artist: t.artist,
+        album: t.album,
+        duration: t.duration
+      }))
+      await addClientPlaylistItems(currentPlaylist.value.id, items)
+    } else {
+      const node = currentNode.value
+      if (!node) {
+        toast.error('节点未连接')
+        return
+      }
+      await addTracksToPlaylist(
+        node,
+        currentPlaylist.value.id,
+        selectedCandidate.value.map((t) => t.id)
+      )
+    }
     toast.success(`已添加 ${selectedCandidate.value.length} 首`)
     addDialogVisible.value = false
     await loadDetail()
   } catch (e) {
-    toast.error('添加失败', e.response?.data?.detail || e.message, e)
+    toast.error('添加失败', e?.response?.data?.detail || e.message, e)
   }
 }
 
-// ---- 手动多选辅助（替代 el-table 内建 selection） ----
+// ---- 手动多选辅助 ----
 function isSelectedIn(track, list) {
-  return list.some((t) => t.id === track.id)
+  return list.some((t) => (t.__clientItemId || t.id) === (track.__clientItemId || track.id))
 }
 function allSelectedIn(rows, list) {
-  return rows.length > 0 && rows.every((t) => list.some((s) => s.id === t.id))
+  return rows.length > 0 && rows.every((t) => isSelectedIn(t, list))
 }
 function toggleDetailTrack(track) {
   const next = isSelectedIn(track, selectedDetailTracks.value)
-    ? selectedDetailTracks.value.filter((t) => t.id !== track.id)
+    ? selectedDetailTracks.value.filter((t) => (t.__clientItemId || t.id) !== (track.__clientItemId || track.id))
     : [...selectedDetailTracks.value, track]
   onDetailSelectionChange(next)
 }
@@ -258,7 +393,12 @@ function toggleCandidateAll() {
     : candidateTracks.value.slice()
 }
 
-const isAdmin = computed(() => !!nodesStore.activeNode?.userInfo?.is_admin)
+// 切换范围时重新加载
+watch(selectedScope, () => {
+  currentPlaylist.value = null
+  detailTracks.value = []
+  loadPlaylists()
+})
 
 onMounted(() => {
   loadPlaylists()
@@ -272,6 +412,16 @@ onMounted(() => {
         播放列表管理
       </h2>
       <div class="flex items-center gap-2">
+        <Select v-model="selectedScope">
+          <SelectTrigger class="w-[200px]">
+            <SelectValue placeholder="选择范围" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="opt in scopeOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
         <Button @click="openCreate">
           <Plus class="h-4 w-4" />
           新建播放列表
@@ -287,7 +437,9 @@ onMounted(() => {
       <!-- 左：播放列表 -->
       <Card class="lg:col-span-1">
         <CardHeader>
-          <CardTitle class="text-base">当前节点播放列表</CardTitle>
+          <CardTitle class="text-base">
+            {{ isClientScope ? '本机播放列表' : '节点播放列表' }}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -404,7 +556,7 @@ onMounted(() => {
                 </TableCell>
               </TableRow>
               <template v-else>
-                <TableRow v-for="(t, i) in detailTracks" :key="t.id">
+                <TableRow v-for="(t, i) in detailTracks" :key="t.__clientItemId || t.id">
                   <TableCell>
                     <input
                       type="checkbox"

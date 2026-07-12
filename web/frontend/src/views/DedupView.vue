@@ -22,14 +22,14 @@ import {
   Square,
   Inbox
 } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import {
   getDedupConfig,
   updateDedupConfig,
   detectDuplicates
 } from '../api/node'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 
 // 去重可用字段（与后端 DEDUP_FIELDS_AVAILABLE 对齐）
@@ -61,7 +61,7 @@ function toggleField(v) {
 }
 
 async function loadConfig() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   configLoading.value = true
   try {
@@ -77,7 +77,7 @@ async function loadConfig() {
 }
 
 async function onSaveConfig() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   savingConfig.value = true
   try {
     await updateDedupConfig(node, {
@@ -98,7 +98,7 @@ async function onDetect() {
     toast.warning('请至少选择一个比对字段')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   detecting.value = true
   try {
     // 后端 POST /api/dedup/detect 无 body，使用当前已保存的配置

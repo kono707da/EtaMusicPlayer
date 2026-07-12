@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { RefreshCw, Pencil, Wand2, AlertCircle } from 'lucide-vue-next'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { useLibraryStore } from '../stores/library'
 import { getTracks } from '../api/node'
 import TrackTable from '../components/TrackTable.vue'
@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { useToast } from '@/components/ui/toast/use-toast'
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const libraryStore = useLibraryStore()
 const toast = useToast()
 
@@ -26,7 +26,7 @@ const metadataVisible = ref(false)
 const renameVisible = ref(false)
 
 async function loadTracks() {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   loading.value = true
   try {
@@ -122,8 +122,8 @@ onMounted(() => {
     <div class="relative">
       <TrackTable
         :tracks="tracks"
-        :node-id="nodesStore.activeNodeId"
-        :node-name="nodesStore.activeNode?.name || ''"
+        :node-id="authStore.localNode?.id"
+        :node-name="authStore.localNode?.name || ''"
         :loading="loading"
         :total="total"
         :page="page"

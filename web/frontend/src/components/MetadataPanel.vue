@@ -10,7 +10,7 @@ import {
   getCoverUrl,
   getLyrics
 } from '../api/node'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -32,7 +32,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible', 'updated'])
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 
 // ==================== Tab 定义 ====================
@@ -176,7 +176,7 @@ async function initFieldStates() {
   }
 
   // 2. 调用 batch_preview API 获取所有字段的真实值（含非 DB 字段）
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
 
   fieldsLoading.value = true
@@ -221,7 +221,7 @@ async function saveMetadata() {
     toast.info('没有需要保存的修改')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) {
     toast.error('保存失败', '未连接节点')
     return
@@ -280,7 +280,7 @@ async function loadLyrics() {
   lyricsOriginal.value = ''
   lyricsMixed.value = false
   if (props.tracks.length === 0) return
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
 
   // 单首直接拉取
@@ -323,7 +323,7 @@ async function saveLyrics() {
     toast.info('歌词未修改')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) {
     toast.error('保存失败', '未连接节点')
     return
@@ -361,7 +361,7 @@ const coverRefreshKey = ref(0)  // 用于强制刷新封面 img
 const hiddenCovers = ref(new Set())  // 加载失败的 track_id 集合
 
 function getTrackCoverUrl(track) {
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return ''
   return getCoverUrl(node, track.id) + `&_=${coverRefreshKey.value}`
 }
@@ -382,7 +382,7 @@ async function onCoverFileChange(e) {
   if (!file) return
   e.target.value = ''  // 重置允许重复选择同一文件
 
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) {
     toast.error('上传失败', '未连接节点')
     return
@@ -416,7 +416,7 @@ async function removeCover() {
   )
   if (!ok) return
 
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) {
     toast.error('删除失败', '未连接节点')
     return
@@ -537,7 +537,7 @@ async function confirmUnsaved(action) {
     try {
       // 保存元数据
       if (hasDirty.value) {
-        const node = nodesStore.activeNode
+        const node = authStore.localNode
         const tracksToSave = saveTracks || props.tracks
         if (node && tracksToSave.length > 0) {
           const dirtyFields = EDIT_FIELDS.filter((f) => fieldStates[f.key]?.isDirty)
@@ -550,7 +550,7 @@ async function confirmUnsaved(action) {
       }
       // 保存歌词（用 saveTracks 处理切换场景）
       if (lyricsDirty.value) {
-        const node = nodesStore.activeNode
+        const node = authStore.localNode
         const tracksToSave = saveTracks || props.tracks
         if (node && tracksToSave.length > 0) {
           await batchWriteLyrics(node, tracksToSave.map((t) => t.id), lyricsText.value)

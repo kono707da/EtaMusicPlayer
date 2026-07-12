@@ -1,41 +1,31 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
+import { useNodesStore } from './nodes'
 
 /**
- * 当前激活节点的登录态
- * token / userInfo 都来自当前激活节点，切换节点时由 restoreFromNode 同步
+ * 认证状态（多节点聚合架构）
  *
- * 登录动作由 nodesStore.loginNode(id) 完成，本 store 仅维护当前激活节点的登录态快照
+ * 不再有"激活节点"概念。本 store 是 nodesStore 的派生视图：
+ * - 本地节点（baseUrl === '/local_node'）的登录态决定 admin 路由访问权限
+ * - 是否"已登录"= 本地节点已登录（admin 管理功能依赖本地节点）
+ * - 库浏览/播放不依赖本 store，直接用 nodesStore.loggedInNodes
+ *
+ * 每个节点独立认证，token 存在 nodesStore.nodes 各节点对象上。
  */
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref('')
-  const userInfo = ref(null)
+  const nodesStore = useNodesStore()
+
+  // 本地节点对象（baseUrl === '/local_node'）
+  const localNode = computed(() =>
+    nodesStore.nodes.find((n) => n.baseUrl === '/local_node') || null
+  )
+
+  const token = computed(() => localNode.value?.token || '')
+  const userInfo = computed(() => localNode.value?.userInfo || null)
 
   const isLoggedIn = computed(() => !!token.value)
   const isAdmin = computed(() => !!userInfo.value?.is_admin)
   const username = computed(() => userInfo.value?.username || '')
-
-  /**
-   * 从节点配置恢复登录态（用于切换激活节点、刷新页面、进入 admin 路由前校验）
-   */
-  function restoreFromNode(node) {
-    if (!node) {
-      clear()
-      return
-    }
-    token.value = node.token || ''
-    userInfo.value = node.userInfo || null
-  }
-
-  function setAuth(t, info) {
-    token.value = t
-    userInfo.value = info
-  }
-
-  function clear() {
-    token.value = ''
-    userInfo.value = null
-  }
 
   return {
     token,
@@ -43,8 +33,6 @@ export const useAuthStore = defineStore('auth', () => {
     isLoggedIn,
     isAdmin,
     username,
-    restoreFromNode,
-    setAuth,
-    clear
+    localNode
   }
 })

@@ -2,7 +2,6 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useNodesStore } from '../stores/nodes'
-import { useAuthStore } from '../stores/auth'
 import { usePluginsStore } from '../stores/plugins'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -33,23 +32,18 @@ import {
   createRemoteNode,
   updateRemoteNode,
   deleteRemoteNode,
-  loginRemoteNode,
-  activateRemoteNode
+  loginRemoteNode
 } from '../api/plugin'
-import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, Star } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2 } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
 const nodesStore = useNodesStore()
-const authStore = useAuthStore()
 const pluginsStore = usePluginsStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 
 const localNode = computed(() => pluginsStore.localNode)
-const localNodeRecord = computed(() =>
-  nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
-)
 
 const remoteNodeList = ref([])
 const remoteNodeLoading = ref(false)
@@ -213,10 +207,7 @@ async function saveRemoteNode() {
       }
       syncRemoteNodeToStore(row, loginResult)
       nodeHealth[nodeId] = { status: 'online', message: '连接正常', checking: false }
-      // 设为当前活动节点
-      nodesStore.setActive(`remote-${nodeId}`)
       nodesStore.authVersion++
-      authStore.restoreFromNode(nodesStore.activeNode)
       toast.success(isNew ? '节点已添加并登录' : '节点已更新并登录')
       remoteNodeDialogVisible.value = false
       await loadRemoteNodes()
@@ -259,40 +250,13 @@ async function confirmDeleteRemoteNode(row) {
     await deleteRemoteNode(row.id)
     // 从 store 移除（退出登录）
     nodesStore.removeNode(`remote-${row.id}`)
-    authStore.restoreFromNode(nodesStore.activeNode)
+    nodesStore.authVersion++
     delete nodeHealth[row.id]
     toast.success('已删除并退出登录')
     await loadRemoteNodes()
   } catch (e) {
     toast.error('删除远程节点失败', e.response?.data?.detail || e.message, e)
   }
-}
-
-async function activateRemoteNodeAction(row) {
-  try {
-    await activateRemoteNode(row.id)
-    nodesStore.setActive(`remote-${row.id}`)
-    authStore.restoreFromNode(nodesStore.activeNode)
-    toast.success(`已设为当前节点：${row.name}`)
-    await loadRemoteNodes()
-  } catch (e) {
-    toast.error('设置失败', e.response?.data?.detail || e.message, e)
-  }
-}
-
-function isRemoteNodeLoggedIn(row) {
-  return !!nodesStore.nodes.find((n) => n.id === `remote-${row.id}`)?.token
-}
-
-function isRemoteNodeActive(row) {
-  return nodesStore.activeNodeId === `remote-${row.id}`
-}
-
-// 本地节点
-function setActiveLocal(node) {
-  nodesStore.setActive(node.id)
-  authStore.restoreFromNode(node)
-  toast.success(`已切换到节点：${node.name}`)
 }
 
 onMounted(() => {
@@ -335,9 +299,6 @@ onMounted(() => {
             <div class="flex items-center gap-2">
               <span class="font-medium text-foreground">本地节点</span>
               <Badge variant="success">已连接</Badge>
-              <Badge v-if="localNodeRecord && localNodeRecord.id === nodesStore.activeNodeId" variant="default">
-                当前
-              </Badge>
             </div>
             <div class="text-xs text-muted-foreground">
               {{ localNode.base_url }} · admin · v{{ localNode.version }}
@@ -346,15 +307,7 @@ onMounted(() => {
         </div>
 
         <div class="flex items-center gap-2">
-          <Button
-            v-if="localNodeRecord && localNodeRecord.id !== nodesStore.activeNodeId"
-            variant="ghost"
-            size="sm"
-            @click="setActiveLocal(localNodeRecord)"
-          >
-            设为当前
-          </Button>
-          <span v-else class="text-xs text-muted-foreground">插件启用即保持连接</span>
+          <span class="text-xs text-muted-foreground">插件启用即保持连接</span>
         </div>
       </div>
     </div>
@@ -391,9 +344,7 @@ onMounted(() => {
           </TableHeader>
           <TableBody>
             <TableRow v-for="row in remoteNodeList" :key="row.id">
-              <TableCell>
-                <Badge v-if="isRemoteNodeActive(row)" variant="success">当前</Badge>
-              </TableCell>
+              <TableCell></TableCell>
               <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.url }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.username }}</TableCell>
@@ -427,15 +378,6 @@ onMounted(() => {
               </TableCell>
               <TableCell>
                 <div class="flex flex-wrap items-center gap-1">
-                  <Button
-                    v-if="isRemoteNodeLoggedIn(row) && !isRemoteNodeActive(row)"
-                    variant="ghost"
-                    size="sm"
-                    @click="activateRemoteNodeAction(row)"
-                  >
-                    <Star class="h-4 w-4" />
-                    设为当前
-                  </Button>
                   <Button variant="ghost" size="sm" @click="openEditRemoteNode(row)">
                     <Pencil class="h-4 w-4" />
                     编辑

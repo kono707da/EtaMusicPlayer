@@ -4,7 +4,7 @@ import {
   Wand2, RefreshCw, Eye, FileText, Info, ArrowRight
 } from 'lucide-vue-next'
 import { previewRename, executeRename } from '../api/node'
-import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,7 +27,7 @@ const props = defineProps({
 
 const emit = defineEmits(['update:visible', 'applied'])
 
-const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const toast = useToast()
 
 // 重命名模板：可用占位符 {artist} {title} {album} {year}
@@ -52,7 +52,7 @@ async function onPreview() {
     toast.warning('请先选择曲目')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   previewing.value = true
   try {
@@ -78,7 +78,7 @@ async function onApply() {
     toast.warning('请先预览')
     return
   }
-  const node = nodesStore.activeNode
+  const node = authStore.localNode
   if (!node) return
   applying.value = true
   try {
