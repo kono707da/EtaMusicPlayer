@@ -19,7 +19,11 @@ pipeline {
 
         stage('Build Image') {
             steps {
-                sh "docker build -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
+                // 切换到经典 docker builder，避免 buildx 生成 manifest list
+                sh "docker buildx use default 2>/dev/null || true"
+                // 清理旧镜像，避免 tag 指向旧的 manifest list
+                sh "docker rmi ${IMAGE_NAME} ${IMAGE_TAG} ${IMAGE_LATEST} 2>/dev/null || true"
+                sh "DOCKER_BUILDKIT=0 docker build -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
             }
         }
 
