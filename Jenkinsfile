@@ -2,7 +2,6 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_BUILDKIT = '0'
         IMAGE_NAME    = 'etamusic'
         REGISTRY      = credentials('docker-registry-url')
         IMAGE_TAG     = "${REGISTRY}/${IMAGE_NAME}:${BUILD_NUMBER}"
@@ -19,11 +18,11 @@ pipeline {
 
         stage('Build Image') {
             steps {
-                // 切换到经典 docker builder，避免 buildx 生成 manifest list
-                sh "docker buildx use default 2>/dev/null || true"
-                // 清理旧镜像，避免 tag 指向旧的 manifest list
+                // 清理旧镜像，避免 tag 指向残留的 manifest list
                 sh "docker rmi ${IMAGE_NAME} ${IMAGE_TAG} ${IMAGE_LATEST} 2>/dev/null || true"
-                sh "DOCKER_BUILDKIT=0 docker build -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
+                // --load 让 buildx 把完整镜像加载到本地 docker image store（普通 manifest，非 manifest list）
+                // --platform 显式指定单平台，避免多平台 manifest list
+                sh "docker buildx build --platform linux/amd64 --load -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
             }
         }
 
