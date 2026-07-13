@@ -57,6 +57,16 @@ watch(
   }
 )
 
+// node 异步就绪后补加载（dialog 已打开但首次 loadDir 时 node 为 null 的情况）
+watch(
+  () => props.node,
+  (n, old) => {
+    if (n && !old && props.open && entries.value.length === 0 && !loading.value) {
+      loadDir('')
+    }
+  }
+)
+
 function onClickEntry(entry) {
   // 进入子目录前，把当前路径推入历史
   if (currentPath.value) history.value.push(currentPath.value)
