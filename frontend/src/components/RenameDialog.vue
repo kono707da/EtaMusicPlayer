@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import {
   Wand2, RefreshCw, Eye, FileText, Info, ArrowRight
 } from 'lucide-vue-next'
@@ -30,6 +30,13 @@ const emit = defineEmits(['update:visible', 'applied'])
 const nodesStore = useNodesStore()
 const toast = useToast()
 
+// 目标节点：从选中曲目的 __nodeId 派生（聚合模式下不再有全局激活节点）
+const targetNode = computed(() => {
+  const firstTrack = props.tracks[0]
+  if (!firstTrack || firstTrack.__nodeId == null) return null
+  return nodesStore.nodes.find((n) => n.id === firstTrack.__nodeId) || null
+})
+
 // 重命名模板：可用占位符 {artist} {title} {album} {year}
 const template = ref('{artist} - {title}')
 const previewing = ref(false)
@@ -52,7 +59,7 @@ async function onPreview() {
     toast.warning('请先选择曲目')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   previewing.value = true
   try {
@@ -78,7 +85,7 @@ async function onApply() {
     toast.warning('请先预览')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   applying.value = true
   try {

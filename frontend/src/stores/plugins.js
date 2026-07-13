@@ -47,13 +47,14 @@ export const usePluginsStore = defineStore('plugins', () => {
       const existing = nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
 
       if (status.available && status.access_token) {
-        // 插件可用且有 token：自动写入/更新
+        // 插件可用且有 token：自动写入/更新（本地节点带 token 写入 nodes store，但不再设为激活）
         const token = status.access_token
         const userInfo = status.user_info
         if (existing) {
           // 更新 token（若变化）
           if (existing.token !== token) {
             nodesStore.updateNode(existing.id, { token, userInfo })
+            nodesStore.authVersion++
           }
         } else {
           // 新增本地节点记录
@@ -64,11 +65,7 @@ export const usePluginsStore = defineStore('plugins', () => {
             password: 'admin123'
           })
           nodesStore.updateNode(added.id, { token, userInfo })
-        }
-        // 若当前没有激活节点，激活本地节点
-        if (!nodesStore.activeNodeId) {
-          const target = nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
-          if (target) nodesStore.setActive(target.id)
+          nodesStore.authVersion++
         }
       } else if (!status.available && existing) {
         // 插件不可用：移除本地节点记录

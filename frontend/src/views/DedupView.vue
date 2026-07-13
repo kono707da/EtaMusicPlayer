@@ -1,5 +1,6 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -29,8 +30,15 @@ import {
   detectDuplicates
 } from '../api/node'
 
+const route = useRoute()
 const nodesStore = useNodesStore()
 const toast = useToast()
+
+// 目标节点：从 route.query.nodeId 读取
+const targetNode = computed(() =>
+  nodesStore.nodes.find((n) => n.id === Number(route.query.nodeId))
+)
+const nodeMissing = computed(() => !targetNode.value || !targetNode.value.token)
 
 // 去重可用字段（与后端 DEDUP_FIELDS_AVAILABLE 对齐）
 const fieldOptions = [
@@ -61,7 +69,7 @@ function toggleField(v) {
 }
 
 async function loadConfig() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   configLoading.value = true
   try {
@@ -77,7 +85,7 @@ async function loadConfig() {
 }
 
 async function onSaveConfig() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   savingConfig.value = true
   try {
     await updateDedupConfig(node, {
@@ -98,7 +106,7 @@ async function onDetect() {
     toast.warning('请至少选择一个比对字段')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   detecting.value = true
   try {
     // 后端 POST /api/dedup/detect 无 body，使用当前已保存的配置
@@ -121,12 +129,23 @@ function keepTrack(track) {
 }
 
 onMounted(() => {
+  if (nodeMissing.value) return
   loadConfig()
 })
 </script>
 
 <template>
   <div class="space-y-6">
+    <!-- 目标节点缺失提示 -->
+    <Card v-if="nodeMissing">
+      <CardContent class="pt-6">
+        <p class="text-sm text-muted-foreground">
+          请从节点列表进入管理功能（在节点管理页面点击「管理」按钮）。
+        </p>
+      </CardContent>
+    </Card>
+
+    <template v-else>
     <div>
       <h2 class="text-2xl font-bold tracking-tight">去重检测</h2>
     </div>
@@ -303,5 +322,6 @@ onMounted(() => {
         </CardContent>
       </Card>
     </div>
+    </template>
   </div>
 </template>

@@ -1,9 +1,9 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   Search, User, Library, ListMusic, Settings, RefreshCw,
-  Wand2, Copy, TrendingUp, Network, Users, LogOut, ChevronDown, ChevronRight, Package
+  Wand2, Copy, TrendingUp, Network, Users, ChevronDown, ChevronRight, Package
 } from 'lucide-vue-next'
 import PlaylistTree from './components/PlaylistTree.vue'
 import PlayerBar from './components/PlayerBar.vue'
@@ -13,10 +13,8 @@ import { useToast } from '@/components/ui/toast/use-toast'
 import { useConfirm } from '@/composables/use-confirm'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { useNodesStore } from './stores/nodes'
-import { useAuthStore } from './stores/auth'
 import { useLibraryStore } from './stores/library'
 import { usePluginsStore } from './stores/plugins'
 import { getPluginNavItems } from './plugins'
@@ -24,23 +22,24 @@ import { getPluginNavItems } from './plugins'
 const router = useRouter()
 const route = useRoute()
 const nodesStore = useNodesStore()
-const authStore = useAuthStore()
 const libraryStore = useLibraryStore()
 const pluginsStore = usePluginsStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 
-const activeNode = computed(() => nodesStore.activeNode)
-const userInfo = computed(() => authStore.userInfo)
-const isAdmin = computed(() => !!userInfo.value?.is_admin)
-const isLoggedIn = computed(() => authStore.isLoggedIn)
+// 已登录节点数（用于顶部静态指示器）
+const loggedInCount = computed(() => nodesStore.loggedInNodes.length)
+const hasLoggedInNode = computed(() => loggedInCount.value > 0)
+
+// 任一已登录节点是 admin 则显示管理功能入口
+const isAdmin = computed(() =>
+  nodesStore.loggedInNodes.some((n) => n.userInfo?.is_admin)
+)
 
 const searchKeyword = computed({
   get: () => libraryStore.keyword,
   set: (v) => (libraryStore.keyword = v || '')
 })
-
-const switchableNodes = computed(() => nodesStore.loggedInNodes)
 
 // 核心导航（始终显示）
 const coreNavItems = [
@@ -95,11 +94,6 @@ const showTree = computed(() =>
   currentPath.value === '/library' || currentPath.value === '/playlists'
 )
 
-function onNodeChange(nodeId) {
-  nodesStore.setActive(nodeId)
-  authStore.restoreFromNode(nodesStore.activeNode)
-}
-
 async function onSearch() {
   if (!searchKeyword.value.trim()) return
   try {
@@ -114,28 +108,10 @@ function go(path) {
   router.push(path)
 }
 
-async function onLogoutNode() {
-  if (!activeNode.value) return
-  const ok = await confirm(
-    `确定要登出当前节点「${activeNode.value.name}」吗？配置保留，可重新登录。`,
-    { title: '登出节点', type: 'warning' }
-  )
-  if (!ok) return
-  nodesStore.logoutNode(activeNode.value.id)
-  authStore.restoreFromNode(nodesStore.activeNode)
-  toast.success('已登出')
-  if (!nodesStore.activeNode) {
-    router.push('/nodes')
-  }
+// 点击顶部节点指示器：跳转到 /nodes
+function goNodes() {
+  router.push('/nodes')
 }
-
-watch(
-  () => nodesStore.activeNodeId,
-  () => {
-    authStore.restoreFromNode(nodesStore.activeNode)
-  },
-  { immediate: true }
-)
 </script>
 
 <template>
@@ -150,19 +126,20 @@ watch(
         <span class="text-lg font-bold tracking-tight text-gold-gradient">EtaMusic</span>
       </div>
 
-      <!-- 节点切换器 -->
-      <div class="w-48">
-        <Select :model-value="activeNode?.id" @update:model-value="onNodeChange">
-          <SelectTrigger class="h-9 bg-secondary/60 border-border">
-            <SelectValue placeholder="未登录任何节点" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="n in switchableNodes" :key="n.id" :value="n.id">
-              {{ n.name }}
-            </SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      <!-- 节点连接状态指示器（点击跳转 /nodes） -->
+      <button
+        class="flex h-9 items-center gap-2 rounded-md border border-border bg-secondary/60 px-3 text-sm transition-colors hover:bg-accent"
+        :title="hasLoggedInNode ? `已连接 ${loggedInCount} 个节点` : '未连接任何节点'"
+        @click="goNodes"
+      >
+        <span
+          class="inline-block h-2 w-2 rounded-full"
+          :class="hasLoggedInNode ? 'bg-green-500' : 'bg-muted-foreground/50'"
+        ></span>
+        <span class="text-muted-foreground">
+          {{ hasLoggedInNode ? `已连接 ${loggedInCount} 个节点` : '未连接节点' }}
+        </span>
+      </button>
 
       <!-- 搜索框 -->
       <div class="relative flex-1 max-w-md">
@@ -181,18 +158,14 @@ watch(
           <DropdownMenuTrigger as-child>
             <button class="flex h-9 items-center gap-2 rounded-md px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
               <User class="h-4 w-4" />
-              <span>{{ isLoggedIn ? (userInfo?.username || '已登录') : '未登录' }}</span>
+              <span>{{ hasLoggedInNode ? '已登录' : '未登录' }}</span>
               <ChevronDown class="h-3.5 w-3.5" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" class="min-w-[160px]">
-            <DropdownMenuItem v-if="isLoggedIn" @select="onLogoutNode">
-              <LogOut class="mr-2 h-4 w-4" />
-              登出当前节点
-            </DropdownMenuItem>
-            <DropdownMenuItem v-else @select="go('/nodes')">
+            <DropdownMenuItem @select="goNodes">
               <Network class="mr-2 h-4 w-4" />
-              去登录节点
+              节点设置
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

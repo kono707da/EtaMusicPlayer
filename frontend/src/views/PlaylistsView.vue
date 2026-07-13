@@ -1,7 +1,6 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useNodesStore } from '../stores/nodes'
-import { useLibraryStore } from '../stores/library'
 import {
   getPlaylists,
   createPlaylist,
@@ -39,22 +38,21 @@ import { useConfirm } from '@/composables/use-confirm'
 import { Plus, RefreshCw, Loader2 } from 'lucide-vue-next'
 
 const nodesStore = useNodesStore()
-const libraryStore = useLibraryStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 
-const playlists = ref([])
+const playlists = ref([]) // 聚合所有已登录节点的播放列表，每条含 __nodeId/__nodeName
 const loading = ref(false)
 
 // 当前选中的播放列表详情
-const currentPlaylist = ref(null)
+const currentPlaylist = ref(null) // 含 __nodeId
 const detailTracks = ref([])
 const detailLoading = ref(false)
 
 // 创建/编辑对话框
 const dialogVisible = ref(false)
 const editing = ref(null) // 编辑中的播放列表对象
-const form = ref({ name: '', description: '' })
+const form = ref({ name: '', description: '', __nodeId: null })
 
 // 从曲库添加曲目对话框
 const addDialogVisible = ref(false)
@@ -65,13 +63,41 @@ const candidateLoading = ref(false)
 // 当前选中详情中的曲目
 const selectedDetailTracks = ref([])
 
+// 任一已登录节点是 admin：显示管理入口（创建/编辑/删除按钮）
+const hasAdminNode = computed(() =>
+  nodesStore.loggedInNodes.some((n) => n.userInfo?.is_admin)
+)
+
+// 根据 currentPlaylist 查找对应节点对象
+function currentTargetNode() {
+  if (!currentPlaylist.value) return null
+  return nodesStore.nodes.find((n) => n.id === currentPlaylist.value.__nodeId) || null
+}
+
 async function loadPlaylists() {
-  const node = nodesStore.activeNode
-  if (!node) return
+  const loggedIn = nodesStore.loggedInNodes
+  if (loggedIn.length === 0) {
+    playlists.value = []
+    return
+  }
   loading.value = true
   try {
-    const data = await getPlaylists(node)
-    playlists.value = Array.isArray(data) ? data : data.items || []
+    const results = await Promise.allSettled(
+      loggedIn.map(async (n) => {
+        const data = await getPlaylists(n)
+        const items = Array.isArray(data) ? data : data.items || []
+        return items.map((p) => ({
+          ...p,
+          __nodeId: n.id,
+          __nodeName: n.name
+        }))
+      })
+    )
+    const merged = []
+    results.forEach((r) => {
+      if (r.status === 'fulfilled') merged.push(...r.value)
+    })
+    playlists.value = merged
   } catch (e) {
     toast.error('获取播放列表失败', e.message || e)
   } finally {
@@ -86,7 +112,8 @@ async function viewDetail(pl) {
 
 async function loadDetail() {
   if (!currentPlaylist.value) return
-  const node = nodesStore.activeNode
+  const node = currentTargetNode()
+  if (!node) return
   detailLoading.value = true
   try {
     // 后端返回 PlaylistDetail，items 内每项含 track 对象
@@ -102,13 +129,19 @@ async function loadDetail() {
 
 function openCreate() {
   editing.value = null
-  form.value = { name: '', description: '' }
+  // 默认创建到第一个已登录的 admin 节点（若有）
+  const adminNode = nodesStore.loggedInNodes.find((n) => n.userInfo?.is_admin)
+  form.value = {
+    name: '',
+    description: '',
+    __nodeId: (adminNode || nodesStore.loggedInNodes[0])?.id || null
+  }
   dialogVisible.value = true
 }
 
 function openEdit(pl) {
   editing.value = pl
-  form.value = { name: pl.name, description: pl.description || '' }
+  form.value = { name: pl.name, description: pl.description || '', __nodeId: pl.__nodeId }
   dialogVisible.value = true
 }
 
@@ -117,13 +150,23 @@ async function onSave() {
     toast.warning('请输入名称')
     return
   }
-  const node = nodesStore.activeNode
+  const node = nodesStore.nodes.find((n) => n.id === form.value.__nodeId)
+  if (!node) {
+    toast.warning('请选择目标节点')
+    return
+  }
   try {
     if (editing.value) {
-      await updatePlaylist(node, editing.value.id, form.value)
+      await updatePlaylist(node, editing.value.id, {
+        name: form.value.name,
+        description: form.value.description
+      })
       toast.success('已更新')
     } else {
-      await createPlaylist(node, form.value)
+      await createPlaylist(node, {
+        name: form.value.name,
+        description: form.value.description
+      })
       toast.success('已创建')
     }
     dialogVisible.value = false
@@ -143,11 +186,12 @@ async function onDelete(pl) {
     type: 'warning'
   })
   if (!ok) return
-  const node = nodesStore.activeNode
+  const node = nodesStore.nodes.find((n) => n.id === pl.__nodeId)
+  if (!node) return
   try {
     await deletePlaylist(node, pl.id)
     toast.success('已删除')
-    if (currentPlaylist.value?.id === pl.id) {
+    if (currentPlaylist.value?.id === pl.id && currentPlaylist.value?.__nodeId === pl.__nodeId) {
       currentPlaylist.value = null
       detailTracks.value = []
     }
@@ -171,7 +215,8 @@ async function removeFromPlaylist() {
     { title: '提示', type: 'warning' }
   )
   if (!ok) return
-  const node = nodesStore.activeNode
+  const node = currentTargetNode()
+  if (!node) return
   try {
     await removeTracksFromPlaylist(
       node,
@@ -194,7 +239,8 @@ async function openAddDialog() {
   addDialogVisible.value = true
   candidateLoading.value = true
   try {
-    const node = nodesStore.activeNode
+    const node = currentTargetNode()
+    if (!node) return
     const data = await getTracks(node, { page: 1, page_size: 100 })
     candidateTracks.value = data.items || data.tracks || []
   } catch (e) {
@@ -209,7 +255,8 @@ async function addCandidates() {
     toast.warning('请选择要添加的曲目')
     return
   }
-  const node = nodesStore.activeNode
+  const node = currentTargetNode()
+  if (!node) return
   try {
     await addTracksToPlaylist(
       node,
@@ -257,8 +304,6 @@ function toggleCandidateAll() {
     ? []
     : candidateTracks.value.slice()
 }
-
-const isAdmin = computed(() => !!nodesStore.activeNode?.userInfo?.is_admin)
 
 onMounted(() => {
   loadPlaylists()

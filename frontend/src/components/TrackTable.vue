@@ -46,6 +46,21 @@ const player = usePlayerStore()
 const toast = useToast()
 const nodesStore = useNodesStore()
 
+// 按行数据的 __nodeId 查找节点（聚合模式下不再有全局激活节点）
+function nodeFromRow(row) {
+  const nid = row?.__nodeId
+  if (nid == null) return null
+  return nodesStore.nodes.find((n) => n.id === nid) || null
+}
+
+// 右键菜单：当前行所在节点是否为管理员
+const contextMenuCanEdit = computed(() => {
+  const row = contextMenu.value.row
+  if (!row) return false
+  const node = nodeFromRow(row)
+  return !!node?.userInfo?.is_admin
+})
+
 // ==================== 列配置 ====================
 
 const STORAGE_KEY = 'trackTable.visibleColumns'
@@ -313,8 +328,9 @@ function isInlineEditing(row, colKey) {
 }
 
 function startInlineEdit(row, colKey, event) {
-  // 仅 admin 可编辑
-  if (!nodesStore.activeNode?.userInfo?.is_admin) {
+  // 仅该曲目来源节点的管理员可编辑
+  const node = nodeFromRow(row)
+  if (!node?.userInfo?.is_admin) {
     toast.warning('需要管理员权限', '只有管理员可以编辑元数据')
     return
   }
@@ -351,7 +367,7 @@ async function commitInlineEdit(row) {
     return
   }
 
-  const node = nodesStore.activeNode
+  const node = nodeFromRow(row)
   if (!node) {
     toast.error('编辑失败', '未连接节点')
     inlineEdit.value = { rowId: null, field: null, value: '', saving: false }
@@ -724,7 +740,7 @@ function onCoverError(e) {
         添加到播放队列
       </li>
       <li
-        v-if="nodesStore.activeNode?.userInfo?.is_admin"
+        v-if="contextMenuCanEdit"
         class="flex cursor-pointer items-center gap-2 rounded px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         @click="editMetadata"
       >

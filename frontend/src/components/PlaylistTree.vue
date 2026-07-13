@@ -18,7 +18,7 @@ const treeData = computed(() => {
   if (loggedNodes.length === 0) return []
   return loggedNodes.map((n) => ({
     id: `node-${n.id}`,
-    label: n.name + (n.id === nodesStore.activeNodeId ? ' (当前)' : ''),
+    label: n.name,
     type: 'node',
     nodeId: n.id,
     nodeName: n.name,
@@ -31,38 +31,36 @@ const treeData = computed(() => {
         nodeName: n.name,
         isLeaf: true
       },
-      ...(n.id === nodesStore.activeNodeId
-        ? (() => {
-            const inbox = (libraryStore.playlists || []).find((p) => p.is_system && p.name === '收集箱')
-            return inbox
-              ? [
-                  {
-                    id: `node-${n.id}-inbox`,
-                    label: '收集箱',
-                    type: 'inbox',
-                    nodeId: n.id,
-                    nodeName: n.name,
-                    playlistId: inbox.id,
-                    isLeaf: true
-                  }
-                ]
-              : []
-          })()
-        : []),
-      ...(n.id === nodesStore.activeNodeId
-        ? (libraryStore.playlists || [])
-            .filter((p) => !p.is_system)
-            .map((p) => ({
-              id: `node-${n.id}-pl-${p.id}`,
-              label: p.name,
-              type: 'playlist',
-              nodeId: n.id,
-              nodeName: n.name,
-              playlistId: p.id,
-              isSystem: false,
-              isLeaf: true
-            }))
-        : [])
+      ...((() => {
+        const inbox = (libraryStore.playlists || []).find(
+          (p) => p.is_system && p.name === '收集箱' && p.__nodeId === n.id
+        )
+        return inbox
+          ? [
+              {
+                id: `node-${n.id}-inbox`,
+                label: '收集箱',
+                type: 'inbox',
+                nodeId: n.id,
+                nodeName: n.name,
+                playlistId: inbox.id,
+                isLeaf: true
+              }
+            ]
+          : []
+      })()),
+      ...((libraryStore.playlists || [])
+        .filter((p) => !p.is_system && p.__nodeId === n.id)
+        .map((p) => ({
+          id: `node-${n.id}-pl-${p.id}`,
+          label: p.name,
+          type: 'playlist',
+          nodeId: n.id,
+          nodeName: n.name,
+          playlistId: p.id,
+          isSystem: false,
+          isLeaf: true
+        })))
     ]
   }))
 })
@@ -89,29 +87,20 @@ function childIcon(type) {
 
 function onNodeClick(data) {
   currentKey.value = data.id
-  // 选中节点切换
+  // 点击节点行仅展开/折叠，不再切换激活节点
   if (data.type === 'node') {
-    if (data.nodeId !== nodesStore.activeNodeId) {
-      nodesStore.setActive(data.nodeId)
-      // library store 的 watch activeNodeId 会刷新
-    }
+    toggleExpand(data.id)
     return
   }
 
   // 选中"全部音乐"或"播放列表"
   if (data.type === 'all') {
-    if (data.nodeId !== nodesStore.activeNodeId) {
-      nodesStore.setActive(data.nodeId)
-    }
     libraryStore.resetPaging()
     libraryStore.loadAllTracks()
     emit('select', { type: 'all', nodeId: data.nodeId, nodeName: data.nodeName })
   } else if (data.type === 'inbox') {
-    if (data.nodeId !== nodesStore.activeNodeId) {
-      nodesStore.setActive(data.nodeId)
-    }
     libraryStore.resetPaging()
-    libraryStore.loadPlaylistTracks(data.playlistId)
+    libraryStore.loadPlaylistTracks({ id: data.playlistId, nodeId: data.nodeId })
     emit('select', {
       type: 'inbox',
       nodeId: data.nodeId,
@@ -119,11 +108,8 @@ function onNodeClick(data) {
       playlistId: data.playlistId
     })
   } else if (data.type === 'playlist') {
-    if (data.nodeId !== nodesStore.activeNodeId) {
-      nodesStore.setActive(data.nodeId)
-    }
     libraryStore.resetPaging()
-    libraryStore.loadPlaylistTracks(data.playlistId)
+    libraryStore.loadPlaylistTracks({ id: data.playlistId, nodeId: data.nodeId })
     emit('select', {
       type: 'playlist',
       nodeId: data.nodeId,
@@ -138,10 +124,11 @@ function goNodes() {
 }
 
 onMounted(() => {
-  // 默认展开当前激活节点
-  if (nodesStore.activeNode) {
-    expandedIds.value = [`node-${nodesStore.activeNode.id}`]
-    currentKey.value = `node-${nodesStore.activeNode.id}-all`
+  // 默认展开第一个已登录节点
+  const first = nodesStore.loggedInNodes[0]
+  if (first) {
+    expandedIds.value = [`node-${first.id}`]
+    currentKey.value = `node-${first.id}-all`
   }
 })
 </script>
@@ -194,14 +181,10 @@ onMounted(() => {
             />
           </button>
           <Server
-            class="h-4 w-4 shrink-0"
-            :class="node.nodeId === nodesStore.activeNodeId ? 'text-primary' : 'text-muted-foreground'"
+            class="h-4 w-4 shrink-0 text-muted-foreground"
           />
           <span
-            class="truncate"
-            :class="node.nodeId === nodesStore.activeNodeId
-              ? 'text-primary font-medium'
-              : 'text-foreground'"
+            class="truncate text-foreground"
           >
             {{ node.label }}
           </span>

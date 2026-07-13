@@ -1,5 +1,6 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useConfirm } from '@/composables/use-confirm'
 import { Button } from '@/components/ui/button'
@@ -43,9 +44,16 @@ import {
   deleteUser
 } from '../api/node'
 
+const route = useRoute()
 const nodesStore = useNodesStore()
 const toast = useToast()
 const { confirm } = useConfirm()
+
+// 目标节点：从 route.query.nodeId 读取
+const targetNode = computed(() =>
+  nodesStore.nodes.find((n) => n.id === Number(route.query.nodeId))
+)
+const nodeMissing = computed(() => !targetNode.value || !targetNode.value.token)
 
 const users = ref([])
 const loading = ref(false)
@@ -60,7 +68,7 @@ const form = reactive({
 })
 
 async function loadUsers() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   loading.value = true
   try {
@@ -100,7 +108,7 @@ async function onSave() {
     toast.warning('请输入密码')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   try {
     if (editing.value) {
       const payload = { username: form.username, is_admin: form.is_admin }
@@ -128,7 +136,7 @@ async function onDelete(row) {
     type: 'danger'
   })
   if (!ok) return
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   try {
     await deleteUser(node, row.id)
     toast.success('已删除')
@@ -139,12 +147,23 @@ async function onDelete(row) {
 }
 
 onMounted(() => {
+  if (nodeMissing.value) return
   loadUsers()
 })
 </script>
 
 <template>
   <div class="space-y-6">
+    <!-- 目标节点缺失提示 -->
+    <Card v-if="nodeMissing">
+      <CardContent class="pt-6">
+        <p class="text-sm text-muted-foreground">
+          请从节点列表进入管理功能（在节点管理页面点击「管理」按钮）。
+        </p>
+      </CardContent>
+    </Card>
+
+    <template v-else>
     <div class="flex items-center justify-between">
       <h2 class="text-2xl font-bold tracking-tight">用户管理</h2>
       <div class="flex gap-2">
@@ -272,5 +291,6 @@ onMounted(() => {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </template>
   </div>
 </template>
