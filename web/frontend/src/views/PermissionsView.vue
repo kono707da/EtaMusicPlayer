@@ -22,7 +22,8 @@ import {
   TableCell
 } from '@/components/ui/table'
 import { Loader2, Network, ShieldCheck, ShieldOff, Shield, Inbox } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { useTargetNode } from '../composables/use-target-node'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   getPlaylists,
   getUsers,
@@ -31,7 +32,7 @@ import {
   revokePermission
 } from '../api/node'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 
 const playlists = ref([])
@@ -41,7 +42,7 @@ const permissions = ref([]) // 当前播放列表已授权用户
 const loading = ref(false)
 
 async function loadPlaylists() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node) return
   try {
     const data = await getPlaylists(node)
@@ -52,7 +53,7 @@ async function loadPlaylists() {
 }
 
 async function loadUsers() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node) return
   try {
     const data = await getUsers(node)
@@ -64,7 +65,7 @@ async function loadUsers() {
 
 async function loadPermissions() {
   if (!selectedPlaylistId.value) return
-  const node = authStore.localNode
+  const node = targetNode.value
   loading.value = true
   try {
     // 后端 GET /api/permissions?playlist_id=，返回 PermissionOut 列表（含 id, user_id）
@@ -82,7 +83,7 @@ watch(selectedPlaylistId, () => {
 })
 
 async function onGrant(userId) {
-  const node = authStore.localNode
+  const node = targetNode.value
   try {
     await grantPermission(node, selectedPlaylistId.value, userId)
     toast.success('已授权')
@@ -99,7 +100,7 @@ async function onRevoke(userId) {
     toast.warning('未找到授权记录')
     return
   }
-  const node = authStore.localNode
+  const node = targetNode.value
   try {
     await revokePermission(node, perm.id)
     toast.success('已撤销')
@@ -122,6 +123,9 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div>
       <h2 class="text-2xl font-bold tracking-tight">播放列表授权管理</h2>
     </div>

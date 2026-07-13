@@ -10,10 +10,11 @@ import {
 } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
 import { RefreshCw, Loader2, Search } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useTargetNode } from '../composables/use-target-node'
 import { getAuditLogs } from '../api/node'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 
 const logs = ref([])
@@ -39,7 +40,7 @@ const actionLabels = {
 const totalPages = computed(() => Math.ceil(total.value / size.value) || 1)
 
 async function loadLogs() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node || !node.token) return
   loading.value = true
   try {
@@ -82,6 +83,9 @@ onMounted(() => loadLogs())
 
 <template>
   <div class="space-y-5">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div class="flex items-center justify-between">
       <h2 class="text-xl font-bold text-foreground">审计日志</h2>
       <Button variant="outline" size="sm" :disabled="loading" @click="loadLogs">

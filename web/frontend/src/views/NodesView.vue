@@ -34,7 +34,7 @@ import {
   deleteRemoteNode,
   loginRemoteNode
 } from '../api/plugin'
-import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, CircleAlert } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, CircleAlert, Settings } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -248,6 +248,12 @@ async function saveRemoteNode() {
   }
 }
 
+// 跳转到该节点的管理页面
+function goManage(row) {
+  const nodeId = `remote-${row.id}`
+  router.push({ path: '/admin/scan', query: { nodeId } })
+}
+
 // 删除 = 退出登录 + 删除配置
 async function confirmDeleteRemoteNode(row) {
   const ok = await confirm(`确定删除远程节点「${row.name}」？将同时退出登录并删除配置。`, {
@@ -387,6 +393,15 @@ onMounted(() => {
               </TableCell>
               <TableCell>
                 <div class="flex flex-wrap items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    :disabled="!nodeHealth[row.id] || nodeHealth[row.id]?.status !== 'online'"
+                    @click="goManage(row)"
+                  >
+                    <Settings class="h-4 w-4" />
+                    管理
+                  </Button>
                   <Button variant="ghost" size="sm" @click="openEditRemoteNode(row)">
                     <Pencil class="h-4 w-4" />
                     编辑

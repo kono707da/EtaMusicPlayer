@@ -17,7 +17,8 @@ import {
   TableCell
 } from '@/components/ui/table'
 import { RefreshCw, Loader2, Plus, Trash2, Play, FolderOpen } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useTargetNode } from '../composables/use-target-node'
 import {
   triggerScan,
   getScanStatus,
@@ -27,7 +28,7 @@ import {
 } from '../api/node'
 import PathPickerDialog from '@/components/PathPickerDialog.vue'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -49,7 +50,7 @@ function onPathPicked(p) {
 
 // 拉取最近一次任务状态（如有 task_id 缓存）
 async function refreshTask() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node || !lastTask.value?.id) return
   try {
     lastTask.value = await getScanStatus(node, lastTask.value.id)
@@ -59,7 +60,7 @@ async function refreshTask() {
 }
 
 async function refreshDirs() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node) return
   loading.value = true
   try {
@@ -73,7 +74,7 @@ async function refreshDirs() {
 }
 
 async function onTrigger(watchDirId) {
-  const node = authStore.localNode
+  const node = targetNode.value
   triggering.value = true
   try {
     // 后端同步执行扫描，请求返回时扫描已完成
@@ -96,7 +97,7 @@ async function onAddDir() {
     toast.warning('请输入目录路径')
     return
   }
-  const node = authStore.localNode
+  const node = targetNode.value
   try {
     await addWatchDir(node, {
       path: newDir.value.path,
@@ -117,7 +118,7 @@ async function onRemoveDir(row) {
     { title: '移除目录', type: 'danger' }
   )
   if (!ok) return
-  const node = authStore.localNode
+  const node = targetNode.value
   try {
     await deleteWatchDir(node, row.id)
     toast.success('已移除')
@@ -147,6 +148,9 @@ function taskTagVariant(status) {
 
 <template>
   <div class="space-y-6">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div class="flex items-center justify-between">
       <h2 class="text-2xl font-bold tracking-tight">扫描管理</h2>
       <div class="flex gap-2">
@@ -312,7 +316,7 @@ function taskTagVariant(status) {
     <!-- 路径选择对话框 -->
     <PathPickerDialog
       v-model:open="pathPickerOpen"
-      :node="authStore.localNode"
+      :node="targetNode.value"
       title="选择监控目录"
       @select="onPathPicked"
     />

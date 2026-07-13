@@ -22,14 +22,15 @@ import {
   Square,
   Inbox
 } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useTargetNode } from '../composables/use-target-node'
 import {
   getDedupConfig,
   updateDedupConfig,
   detectDuplicates
 } from '../api/node'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 
 // 去重可用字段（与后端 DEDUP_FIELDS_AVAILABLE 对齐）
@@ -61,7 +62,7 @@ function toggleField(v) {
 }
 
 async function loadConfig() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node) return
   configLoading.value = true
   try {
@@ -77,7 +78,7 @@ async function loadConfig() {
 }
 
 async function onSaveConfig() {
-  const node = authStore.localNode
+  const node = targetNode.value
   savingConfig.value = true
   try {
     await updateDedupConfig(node, {
@@ -98,7 +99,7 @@ async function onDetect() {
     toast.warning('请至少选择一个比对字段')
     return
   }
-  const node = authStore.localNode
+  const node = targetNode.value
   detecting.value = true
   try {
     // 后端 POST /api/dedup/detect 无 body，使用当前已保存的配置
@@ -127,6 +128,9 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div>
       <h2 class="text-2xl font-bold tracking-tight">去重检测</h2>
     </div>

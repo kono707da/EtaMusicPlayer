@@ -35,7 +35,8 @@ import {
   EyeOff,
   Inbox
 } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { useTargetNode } from '../composables/use-target-node'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   getUsers,
   createUser,
@@ -43,7 +44,7 @@ import {
   deleteUser
 } from '../api/node'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -60,7 +61,7 @@ const form = reactive({
 })
 
 async function loadUsers() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node) return
   loading.value = true
   try {
@@ -100,7 +101,7 @@ async function onSave() {
     toast.warning('请输入密码')
     return
   }
-  const node = authStore.localNode
+  const node = targetNode.value
   try {
     if (editing.value) {
       const payload = { username: form.username, is_admin: form.is_admin }
@@ -128,7 +129,7 @@ async function onDelete(row) {
     type: 'danger'
   })
   if (!ok) return
-  const node = authStore.localNode
+  const node = targetNode.value
   try {
     await deleteUser(node, row.id)
     toast.success('已删除')
@@ -145,6 +146,9 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div class="flex items-center justify-between">
       <h2 class="text-2xl font-bold tracking-tight">用户管理</h2>
       <div class="flex gap-2">

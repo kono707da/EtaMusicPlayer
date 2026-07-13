@@ -10,10 +10,11 @@ import {
 } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
 import { RefreshCw, Loader2, X, Clock, Activity } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useTargetNode } from '../composables/use-target-node'
 import { listTasks, cancelTask } from '../api/node'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -64,7 +65,7 @@ const taskTypeLabels = {
 const totalPages = computed(() => Math.ceil(total.value / size.value) || 1)
 
 async function loadTasks() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node || !node.token) return
   loading.value = true
   try {
@@ -85,7 +86,7 @@ async function onCancel(task) {
   const ok = await confirm(`确定取消任务 #${task.id} 吗？`, { title: '取消任务', type: 'warning' })
   if (!ok) return
   try {
-    await cancelTask(authStore.localNode, task.id)
+    await cancelTask(targetNode.value, task.id)
     toast.success('任务已取消')
     loadTasks()
   } catch (e) {
@@ -116,6 +117,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="space-y-5">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div class="flex items-center justify-between">
       <h2 class="text-xl font-bold text-foreground">任务管理</h2>
       <Button variant="outline" size="sm" :disabled="loading" @click="loadTasks">
