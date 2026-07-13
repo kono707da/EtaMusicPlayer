@@ -29,7 +29,11 @@ const pluginsStore = usePluginsStore()
 const toast = useToast()
 
 const userInfo = computed(() => authStore.userInfo)
-const isAdmin = computed(() => authStore.isAdmin)
+const isAdmin = computed(() => {
+  // 本地节点是 admin，或任意已登录远程节点是 admin
+  if (authStore.isAdmin) return true
+  return nodesStore.loggedInNodes.some((n) => n.userInfo?.is_admin)
+})
 const isLoggedIn = computed(() => authStore.isLoggedIn)
 const loggedInCount = computed(() => nodesStore.loggedInNodes.length)
 
@@ -100,7 +104,12 @@ function onSearch() {
 }
 
 function go(path) {
-  router.push(path)
+  // admin 路由之间跳转时保留 nodeId（远程节点管理上下文）
+  if (path.startsWith('/admin/') && route.query.nodeId) {
+    router.push({ path, query: { nodeId: route.query.nodeId } })
+  } else {
+    router.push(path)
+  }
 }
 
 // 启动时自动刷新远程节点 token（后端重启后 token 可能失效）

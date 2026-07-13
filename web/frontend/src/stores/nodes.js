@@ -23,10 +23,12 @@ export const useNodesStore = defineStore('nodes', () => {
   const loggedInNodes = computed(() => nodes.value.filter((n) => !!n.token))
 
   /**
-   * 生成节点 id（简单递增）
+   * 生成节点 id（简单递增，仅对数字 ID 计算）
    */
   function genId() {
-    const maxId = nodes.value.reduce((m, n) => Math.max(m, n.id), 0)
+    const maxId = nodes.value.reduce((m, n) => {
+      return typeof n.id === 'number' ? Math.max(m, n.id) : m
+    }, 0)
     return maxId + 1
   }
 
@@ -54,17 +56,19 @@ export const useNodesStore = defineStore('nodes', () => {
   }
 
   /**
-   * 添加节点（仅保存配置，不自动登录）
+   * 添加节点
+   * 如果传入 id（远程节点格式 remote-{id}）则保留，否则生成数字 id
+   * 如果传入 token/userInfo（远程节点登录后同步）则保留
    */
   function addNode(node) {
     const newNode = {
-      id: genId(),
+      id: node.id != null ? node.id : genId(),
       name: node.name,
       baseUrl: (node.baseUrl || '').replace(/\/$/, ''),
       username: node.username || '',
       password: node.password || '',
-      token: '',
-      userInfo: null
+      token: node.token || '',
+      userInfo: node.userInfo || null
     }
     nodes.value.push(newNode)
     persist()

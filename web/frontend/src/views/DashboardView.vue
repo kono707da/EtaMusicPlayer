@@ -10,17 +10,18 @@ import {
   RefreshCw, Loader2, Music, Play, SkipForward, CheckCircle,
   TrendingUp, Calendar, Users, Clock
 } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useTargetNode } from '../composables/use-target-node'
 import { getDashboard } from '../api/node'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 
 const dashboard = ref(null)
 const loading = ref(false)
 
 async function loadDashboard() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node || !node.token) return
   loading.value = true
   try {
@@ -43,6 +44,9 @@ onMounted(() => loadDashboard())
 
 <template>
   <div class="space-y-6">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div class="flex items-center justify-between">
       <h2 class="text-xl font-bold text-foreground">数据看板</h2>
       <Button variant="outline" size="sm" :disabled="loading" @click="loadDashboard">

@@ -21,14 +21,15 @@ import {
   TableCell
 } from '@/components/ui/table'
 import { Loader2, TrendingUp, Search, Replace, Inbox, Sparkles } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { useTargetNode } from '../composables/use-target-node'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   getPlaylists,
   detectQualityUpgrades,
   applyQualityReplace
 } from '../api/node'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const toast = useToast()
 
 const playlists = ref([])
@@ -42,7 +43,7 @@ const detecting = ref(false)
 const replacing = ref(false)
 
 async function loadPlaylists() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node) return
   try {
     const data = await getPlaylists(node)
@@ -57,7 +58,7 @@ async function onDetect() {
     toast.warning('请选择播放列表')
     return
   }
-  const node = authStore.localNode
+  const node = targetNode.value
   detecting.value = true
   selectedUpgrade.value = null
   selectedNewTrackId.value = null
@@ -82,7 +83,7 @@ async function onReplace() {
     toast.warning('请选择要替换成的高音质版本')
     return
   }
-  const node = authStore.localNode
+  const node = targetNode.value
   replacing.value = true
   try {
     await applyQualityReplace(
@@ -120,6 +121,9 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <div>
       <h2 class="text-2xl font-bold tracking-tight">音质升级检测</h2>
     </div>

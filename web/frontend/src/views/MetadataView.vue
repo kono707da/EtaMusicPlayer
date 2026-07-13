@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { RefreshCw, Pencil, Wand2, AlertCircle } from 'lucide-vue-next'
-import { useAuthStore } from '../stores/auth'
+import { useTargetNode } from '../composables/use-target-node'
 import { useLibraryStore } from '../stores/library'
 import { getTracks } from '../api/node'
 import TrackTable from '../components/TrackTable.vue'
@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { useToast } from '@/components/ui/toast/use-toast'
 
-const authStore = useAuthStore()
+const { targetNode, nodeMissing, nodeMissingMessage } = useTargetNode()
 const libraryStore = useLibraryStore()
 const toast = useToast()
 
@@ -26,7 +26,7 @@ const metadataVisible = ref(false)
 const renameVisible = ref(false)
 
 async function loadTracks() {
-  const node = authStore.localNode
+  const node = targetNode.value
   if (!node) return
   loading.value = true
   try {
@@ -79,6 +79,9 @@ onMounted(() => {
 
 <template>
   <div class="flex flex-col gap-4">
+    <Alert v-if="nodeMissing" variant="destructive" class="mb-4">
+      <AlertDescription>{{ nodeMissingMessage }}</AlertDescription>
+    </Alert>
     <!-- 顶部标题 + 操作 -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-2.5">
@@ -122,8 +125,8 @@ onMounted(() => {
     <div class="relative">
       <TrackTable
         :tracks="tracks"
-        :node-id="authStore.localNode?.id"
-        :node-name="authStore.localNode?.name || ''"
+        :node-id="targetNode.value?.id"
+        :node-name="targetNode.value?.name || ''"
         :loading="loading"
         :total="total"
         :page="page"

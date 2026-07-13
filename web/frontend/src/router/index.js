@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useNodesStore } from '../stores/nodes'
 
 /**
  * 包裹动态 import：chunk 加载失败时（通常是部署后旧 hash 失效）自动刷新一次
@@ -119,15 +120,31 @@ router.beforeEach((to, _from, next) => {
   if (!to.meta.requiresAdmin) {
     return next()
   }
-  // 需要管理员权限：检查本地节点是否已登录且为 admin
+  const nodesStore = useNodesStore()
   const authStore = useAuthStore()
-  if (!authStore.isLoggedIn) {
-    next({ path: '/nodes', query: { redirect: to.fullPath } })
-    return
-  }
-  if (!authStore.isAdmin) {
-    next('/library')
-    return
+
+  const nodeId = to.query.nodeId
+  if (nodeId) {
+    // 指定节点：检查该节点是否已登录且为 admin
+    const node = nodesStore.getNode(String(nodeId))
+    if (!node || !node.token) {
+      next({ path: '/nodes', query: { redirect: to.fullPath } })
+      return
+    }
+    if (!node.userInfo?.is_admin) {
+      next('/library')
+      return
+    }
+  } else {
+    // 未指定节点：回退到本地节点
+    if (!authStore.isLoggedIn) {
+      next({ path: '/nodes', query: { redirect: to.fullPath } })
+      return
+    }
+    if (!authStore.isAdmin) {
+      next('/library')
+      return
+    }
   }
   next()
 })
