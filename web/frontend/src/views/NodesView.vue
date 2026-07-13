@@ -34,7 +34,7 @@ import {
   deleteRemoteNode,
   loginRemoteNode
 } from '../api/plugin'
-import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2 } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, CircleAlert } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,6 +65,8 @@ const remoteNodeForm = reactive({
 })
 
 const remoteNodeErrors = reactive({})
+// 对话框内联错误提示（保存/登录失败时直接显示在表单顶部）
+const remoteNodeSaveError = ref('')
 
 const isEditingRemoteNode = computed(() => editingRemoteNodeId.value !== null)
 
@@ -146,6 +148,7 @@ function openAddRemoteNode() {
   remoteNodeForm.password = ''
   remoteNodeForm.verify_ssl = true
   Object.keys(remoteNodeErrors).forEach((k) => delete remoteNodeErrors[k])
+  remoteNodeSaveError.value = ''
   remoteNodeDialogVisible.value = true
 }
 
@@ -157,6 +160,7 @@ function openEditRemoteNode(row) {
   remoteNodeForm.password = ''
   remoteNodeForm.verify_ssl = row.verify_ssl !== false
   Object.keys(remoteNodeErrors).forEach((k) => delete remoteNodeErrors[k])
+  remoteNodeSaveError.value = ''
   remoteNodeDialogVisible.value = true
 }
 
@@ -174,6 +178,7 @@ function validateRemoteNode() {
 async function saveRemoteNode() {
   if (!validateRemoteNode()) return
   remoteNodeSaving.value = true
+  remoteNodeSaveError.value = ''
   const isNew = !editingRemoteNodeId.value
   let createdNodeId = null
   try {
@@ -222,6 +227,8 @@ async function saveRemoteNode() {
       const status = loginErr.response?.status
       const msg = loginErr.response?.data?.detail || loginErr.message
       const isAuth = status === 401 || status === 403
+      // 内联错误提示：直接在对话框内显示原因
+      remoteNodeSaveError.value = isAuth ? '认证失败：用户名或密码错' : '连接失败：节点不可达'
       toast.error(
         isNew ? '添加失败：登录验证未通过' : '更新失败：登录验证未通过',
         isAuth ? `认证失败：${msg}` : `连接失败：${msg}`,
@@ -233,7 +240,9 @@ async function saveRemoteNode() {
     if (isNew && createdNodeId) {
       try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
     }
-    toast.error('保存远程节点失败', e.response?.data?.detail || e.message, e)
+    const errMsg = e.response?.data?.detail || e.message
+    remoteNodeSaveError.value = '保存失败：' + (errMsg ? String(errMsg).slice(0, 12) : '未知错误')
+    toast.error('保存远程节点失败', errMsg, e)
   } finally {
     remoteNodeSaving.value = false
   }
@@ -410,6 +419,13 @@ onMounted(() => {
             配置远程 eta_node 实例的连接信息。保存时会自动验证登录，登录成功才会保留。
           </DialogDescription>
         </DialogHeader>
+
+        <Alert v-if="remoteNodeSaveError" variant="destructive" class="flex items-start gap-3 border-l-4">
+          <CircleAlert class="h-4 w-4 mt-0.5 shrink-0" />
+          <AlertDescription class="text-destructive font-medium">
+            {{ remoteNodeSaveError }}
+          </AlertDescription>
+        </Alert>
 
         <div class="space-y-4">
           <div class="space-y-2">
