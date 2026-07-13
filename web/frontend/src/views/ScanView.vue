@@ -316,7 +316,7 @@ function taskTagVariant(status) {
     <!-- 路径选择对话框 -->
     <PathPickerDialog
       v-model:open="pathPickerOpen"
-      :node="targetNode.value"
+      :node="targetNode"
       title="选择监控目录"
       @select="onPathPicked"
     />
