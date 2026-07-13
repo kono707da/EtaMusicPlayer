@@ -2,7 +2,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useNodesStore } from '../stores/nodes'
-import { useAuthStore } from '../stores/auth'
 import { usePluginsStore } from '../stores/plugins'
 import NodeForm from '../components/NodeForm.vue'
 import { Button } from '@/components/ui/button'
@@ -23,7 +22,6 @@ import { Plus, Loader2, HardDrive, Server, Settings } from 'lucide-vue-next'
 const route = useRoute()
 const router = useRouter()
 const nodesStore = useNodesStore()
-const authStore = useAuthStore()
 const pluginsStore = usePluginsStore()
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -70,9 +68,6 @@ function onSaved(payload) {
       userInfo: payload.userInfo
     })
     toast.success('节点已更新并登录')
-    if (payload.id === nodesStore.activeNodeId) {
-      authStore.restoreFromNode(nodesStore.activeNode)
-    }
   } else {
     nodesStore.addNode({
       name: payload.name,
@@ -85,7 +80,6 @@ function onSaved(payload) {
       token: payload.token,
       userInfo: payload.userInfo
     })
-    nodesStore.setActive(added.id)
     nodesStore.authVersion++
     toast.success('节点已添加并登录')
   }
@@ -98,7 +92,6 @@ async function onLogin(node) {
   loggingId.value = node.id
   try {
     await nodesStore.loginNode(node.id)
-    authStore.restoreFromNode(nodesStore.activeNode)
     toast.success(`已登录节点：${node.name}`)
     if (route.query.redirect) {
       router.replace(route.query.redirect)
@@ -117,7 +110,6 @@ async function onLogout(node) {
   })
   if (!ok) return
   nodesStore.logoutNode(node.id)
-  authStore.restoreFromNode(nodesStore.activeNode)
   toast.success('已登出')
 }
 
@@ -128,20 +120,12 @@ async function onDelete(node) {
   })
   if (!ok) return
   nodesStore.removeNode(node.id)
-  authStore.restoreFromNode(nodesStore.activeNode)
   toast.success('已删除')
 }
 
-function setActive(node) {
-  nodesStore.setActive(node.id)
-  authStore.restoreFromNode(node)
-  toast.success(`已切换到节点：${node.name}`)
-}
-
+// 跳转到该节点的管理页面（带 ?nodeId=）
 function onManage(node) {
-  nodesStore.setActive(node.id)
-  authStore.restoreFromNode(node)
-  router.push('/admin/scan')
+  router.push({ path: '/admin/scan', query: { nodeId: node.id } })
 }
 
 // 进入页面时再同步一次本地节点状态（确保最新）
@@ -198,9 +182,6 @@ onMounted(() => {
             <div class="flex items-center gap-2">
               <span class="font-medium text-foreground">本地节点</span>
               <Badge variant="success">已连接</Badge>
-              <Badge v-if="localNodeRecord && localNodeRecord.id === nodesStore.activeNodeId" variant="default">
-                当前
-              </Badge>
             </div>
             <div class="text-xs text-muted-foreground">
               {{ localNode.base_url }} · admin · v{{ localNode.version }}
@@ -209,17 +190,9 @@ onMounted(() => {
         </div>
 
         <div class="flex items-center gap-2">
+          <span class="text-xs text-muted-foreground">插件启用即保持连接</span>
           <Button
-            v-if="localNodeRecord && localNodeRecord.id !== nodesStore.activeNodeId"
-            variant="ghost"
-            size="sm"
-            @click="setActive(localNodeRecord)"
-          >
-            设为当前
-          </Button>
-          <span v-else class="text-xs text-muted-foreground">插件启用即保持连接</span>
-          <Button
-            v-if="localNodeRecord"
+            v-if="localNodeRecord && localNodeRecord.userInfo?.is_admin"
             variant="ghost"
             size="sm"
             @click="onManage(localNodeRecord)"
@@ -248,7 +221,6 @@ onMounted(() => {
         <Table>
           <TableHeader>
             <TableRow class="hover:bg-transparent">
-              <TableHead class="w-[64px]"></TableHead>
               <TableHead>名称</TableHead>
               <TableHead>Base URL</TableHead>
               <TableHead class="w-[120px]">用户名</TableHead>
@@ -258,9 +230,6 @@ onMounted(() => {
           </TableHeader>
           <TableBody>
             <TableRow v-for="row in remoteNodes" :key="row.id">
-              <TableCell>
-                <Badge v-if="row.id === nodesStore.activeNodeId" variant="success">当前</Badge>
-              </TableCell>
               <TableCell class="font-medium text-foreground">{{ row.name }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.baseUrl }}</TableCell>
               <TableCell class="text-muted-foreground">{{ row.username }}</TableCell>
@@ -271,16 +240,7 @@ onMounted(() => {
               <TableCell>
                 <div class="flex flex-wrap items-center gap-1">
                   <Button
-                    v-if="row.token"
-                    variant="ghost"
-                    size="sm"
-                    :disabled="row.id === nodesStore.activeNodeId"
-                    @click="setActive(row)"
-                  >
-                    设为当前
-                  </Button>
-                  <Button
-                    v-else
+                    v-if="!row.token"
                     variant="ghost"
                     size="sm"
                     :disabled="loggingId === row.id"
@@ -289,7 +249,12 @@ onMounted(() => {
                     <Loader2 v-if="loggingId === row.id" class="h-4 w-4 animate-spin" />
                     登录
                   </Button>
-                  <Button v-if="row.token" variant="ghost" size="sm" @click="onManage(row)">
+                  <Button
+                    v-if="row.token && row.userInfo?.is_admin"
+                    variant="ghost"
+                    size="sm"
+                    @click="onManage(row)"
+                  >
                     <Settings class="h-4 w-4" />
                     管理
                   </Button>

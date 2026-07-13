@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useConfirm } from '@/composables/use-confirm'
 import { Button } from '@/components/ui/button'
@@ -27,9 +28,16 @@ import {
 } from '../api/node'
 import PathPickerDialog from '@/components/PathPickerDialog.vue'
 
+const route = useRoute()
 const nodesStore = useNodesStore()
 const toast = useToast()
 const { confirm } = useConfirm()
+
+// 目标节点：从 route.query.nodeId 读取
+const targetNode = computed(() =>
+  nodesStore.nodes.find((n) => n.id === Number(route.query.nodeId))
+)
+const nodeMissing = computed(() => !targetNode.value || !targetNode.value.token)
 
 // 最近一次扫描任务状态
 const lastTask = ref(null)
@@ -49,7 +57,7 @@ function onPathPicked(p) {
 
 // 拉取最近一次任务状态（如有 task_id 缓存）
 async function refreshTask() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node || !lastTask.value?.id) return
   try {
     lastTask.value = await getScanStatus(node, lastTask.value.id)
@@ -59,7 +67,7 @@ async function refreshTask() {
 }
 
 async function refreshDirs() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   loading.value = true
   try {
@@ -73,7 +81,8 @@ async function refreshDirs() {
 }
 
 async function onTrigger(watchDirId) {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
+  if (!node) return
   triggering.value = true
   try {
     // 后端同步执行扫描，请求返回时扫描已完成
@@ -96,7 +105,7 @@ async function onAddDir() {
     toast.warning('请输入目录路径')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   try {
     await addWatchDir(node, {
       path: newDir.value.path,
@@ -117,7 +126,7 @@ async function onRemoveDir(row) {
     { title: '移除目录', type: 'danger' }
   )
   if (!ok) return
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   try {
     await deleteWatchDir(node, row.id)
     toast.success('已移除')
@@ -128,6 +137,7 @@ async function onRemoveDir(row) {
 }
 
 onMounted(() => {
+  if (nodeMissing.value) return
   refreshDirs()
   // 定期刷新任务状态（仅当有进行中的任务时）
   timer = setInterval(refreshTask, 5000)
@@ -147,6 +157,16 @@ function taskTagVariant(status) {
 
 <template>
   <div class="space-y-6">
+    <!-- 目标节点缺失提示 -->
+    <Card v-if="nodeMissing">
+      <CardContent class="pt-6">
+        <p class="text-sm text-muted-foreground">
+          请从节点列表进入管理功能（在节点管理页面点击「管理」按钮）。
+        </p>
+      </CardContent>
+    </Card>
+
+    <template v-else>
     <div class="flex items-center justify-between">
       <h2 class="text-2xl font-bold tracking-tight">扫描管理</h2>
       <div class="flex gap-2">
@@ -312,9 +332,10 @@ function taskTagVariant(status) {
     <!-- 路径选择对话框 -->
     <PathPickerDialog
       v-model:open="pathPickerOpen"
-      :node="nodesStore.activeNode"
+      :node="targetNode"
       title="选择监控目录"
       @select="onPathPicked"
     />
+    </template>
   </div>
 </template>

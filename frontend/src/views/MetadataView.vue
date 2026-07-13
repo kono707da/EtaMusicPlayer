@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { RefreshCw, Pencil, Wand2, AlertCircle } from 'lucide-vue-next'
 import { useNodesStore } from '../stores/nodes'
 import { useLibraryStore } from '../stores/library'
@@ -11,9 +12,16 @@ import { Button } from '@/components/ui/button'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { useToast } from '@/components/ui/toast/use-toast'
 
+const route = useRoute()
 const nodesStore = useNodesStore()
 const libraryStore = useLibraryStore()
 const toast = useToast()
+
+// 目标节点：从 route.query.nodeId 读取
+const targetNode = computed(() =>
+  nodesStore.nodes.find((n) => n.id === Number(route.query.nodeId))
+)
+const nodeMissing = computed(() => !targetNode.value || !targetNode.value.token)
 
 const tracks = ref([])
 const loading = ref(false)
@@ -26,7 +34,7 @@ const metadataVisible = ref(false)
 const renameVisible = ref(false)
 
 async function loadTracks() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   loading.value = true
   try {
@@ -73,12 +81,23 @@ async function onUpdated() {
 }
 
 onMounted(() => {
+  if (nodeMissing.value) return
   loadTracks()
 })
 </script>
 
 <template>
   <div class="flex flex-col gap-4">
+    <!-- 目标节点缺失提示 -->
+    <Alert v-if="nodeMissing">
+      <AlertCircle class="h-4 w-4 text-primary" />
+      <AlertTitle>未指定管理节点</AlertTitle>
+      <AlertDescription>
+        请从节点列表进入管理功能（在节点管理页面点击「管理」按钮）。
+      </AlertDescription>
+    </Alert>
+
+    <template v-else>
     <!-- 顶部标题 + 操作 -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-2.5">
@@ -122,8 +141,8 @@ onMounted(() => {
     <div class="relative">
       <TrackTable
         :tracks="tracks"
-        :node-id="nodesStore.activeNodeId"
-        :node-name="nodesStore.activeNode?.name || ''"
+        :node-id="targetNode?.id"
+        :node-name="targetNode?.name || ''"
         :loading="loading"
         :total="total"
         :page="page"
@@ -151,5 +170,6 @@ onMounted(() => {
       :tracks="selectedTracks"
       @applied="onUpdated"
     />
+    </template>
   </div>
 </template>

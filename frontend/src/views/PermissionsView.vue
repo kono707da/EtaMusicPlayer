@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -31,8 +32,15 @@ import {
   revokePermission
 } from '../api/node'
 
+const route = useRoute()
 const nodesStore = useNodesStore()
 const toast = useToast()
+
+// 目标节点：从 route.query.nodeId 读取
+const targetNode = computed(() =>
+  nodesStore.nodes.find((n) => n.id === Number(route.query.nodeId))
+)
+const nodeMissing = computed(() => !targetNode.value || !targetNode.value.token)
 
 const playlists = ref([])
 const users = ref([])
@@ -41,7 +49,7 @@ const permissions = ref([]) // 当前播放列表已授权用户
 const loading = ref(false)
 
 async function loadPlaylists() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   try {
     const data = await getPlaylists(node)
@@ -52,7 +60,7 @@ async function loadPlaylists() {
 }
 
 async function loadUsers() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   try {
     const data = await getUsers(node)
@@ -64,7 +72,7 @@ async function loadUsers() {
 
 async function loadPermissions() {
   if (!selectedPlaylistId.value) return
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   loading.value = true
   try {
     // 后端 GET /api/permissions?playlist_id=，返回 PermissionOut 列表（含 id, user_id）
@@ -82,7 +90,7 @@ watch(selectedPlaylistId, () => {
 })
 
 async function onGrant(userId) {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   try {
     await grantPermission(node, selectedPlaylistId.value, userId)
     toast.success('已授权')
@@ -99,7 +107,7 @@ async function onRevoke(userId) {
     toast.warning('未找到授权记录')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   try {
     await revokePermission(node, perm.id)
     toast.success('已撤销')
@@ -115,6 +123,7 @@ function isAuthorized(userId) {
 }
 
 onMounted(() => {
+  if (nodeMissing.value) return
   loadPlaylists()
   loadUsers()
 })
@@ -122,6 +131,16 @@ onMounted(() => {
 
 <template>
   <div class="space-y-6">
+    <!-- 目标节点缺失提示 -->
+    <Card v-if="nodeMissing">
+      <CardContent class="pt-6">
+        <p class="text-sm text-muted-foreground">
+          请从节点列表进入管理功能（在节点管理页面点击「管理」按钮）。
+        </p>
+      </CardContent>
+    </Card>
+
+    <template v-else>
     <div>
       <h2 class="text-2xl font-bold tracking-tight">播放列表授权管理</h2>
     </div>
@@ -234,5 +253,6 @@ onMounted(() => {
         </div>
       </CardContent>
     </Card>
+    </template>
   </div>
 </template>

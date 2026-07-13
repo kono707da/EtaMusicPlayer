@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -28,8 +29,15 @@ import {
   applyQualityReplace
 } from '../api/node'
 
+const route = useRoute()
 const nodesStore = useNodesStore()
 const toast = useToast()
+
+// 目标节点：从 route.query.nodeId 读取
+const targetNode = computed(() =>
+  nodesStore.nodes.find((n) => n.id === Number(route.query.nodeId))
+)
+const nodeMissing = computed(() => !targetNode.value || !targetNode.value.token)
 
 const playlists = ref([])
 const selectedPlaylistId = ref(null)
@@ -42,7 +50,7 @@ const detecting = ref(false)
 const replacing = ref(false)
 
 async function loadPlaylists() {
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   if (!node) return
   try {
     const data = await getPlaylists(node)
@@ -57,7 +65,7 @@ async function onDetect() {
     toast.warning('请选择播放列表')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   detecting.value = true
   selectedUpgrade.value = null
   selectedNewTrackId.value = null
@@ -82,7 +90,7 @@ async function onReplace() {
     toast.warning('请选择要替换成的高音质版本')
     return
   }
-  const node = nodesStore.activeNode
+  const node = targetNode.value
   replacing.value = true
   try {
     await applyQualityReplace(
@@ -114,12 +122,23 @@ function selectCandidate(row) {
 }
 
 onMounted(() => {
+  if (nodeMissing.value) return
   loadPlaylists()
 })
 </script>
 
 <template>
   <div class="space-y-6">
+    <!-- 目标节点缺失提示 -->
+    <Card v-if="nodeMissing">
+      <CardContent class="pt-6">
+        <p class="text-sm text-muted-foreground">
+          请从节点列表进入管理功能（在节点管理页面点击「管理」按钮）。
+        </p>
+      </CardContent>
+    </Card>
+
+    <template v-else>
     <div>
       <h2 class="text-2xl font-bold tracking-tight">音质升级检测</h2>
     </div>
@@ -321,5 +340,6 @@ onMounted(() => {
         </CardFooter>
       </Card>
     </div>
+    </template>
   </div>
 </template>
