@@ -135,6 +135,18 @@ async function refreshRemoteTokens() {
               name: row.name,
               baseUrl: row.url
             })
+          } else {
+            // store 中没有该远程节点（如清过浏览器缓存/换浏览器），添加进去
+            // password 不暴露给前端，远程节点 token 由后端 /login 接口刷新
+            nodesStore.addNode({
+              id: `remote-${row.id}`,
+              name: row.name,
+              baseUrl: row.url,
+              username: row.username || '',
+              password: '',
+              token: result.access_token,
+              userInfo: result.user_info
+            })
           }
         } catch (e) {
           // 401/403 表示认证失败，清除旧 token
