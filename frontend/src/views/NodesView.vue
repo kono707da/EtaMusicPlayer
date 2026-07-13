@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useConfirm } from '@/composables/use-confirm'
-import { Plus, Loader2, HardDrive, Server } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Settings } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -138,6 +138,12 @@ function setActive(node) {
   toast.success(`已切换到节点：${node.name}`)
 }
 
+function onManage(node) {
+  nodesStore.setActive(node.id)
+  authStore.restoreFromNode(node)
+  router.push('/admin/scan')
+}
+
 // 进入页面时再同步一次本地节点状态（确保最新）
 onMounted(() => {
   pluginsStore.syncLocalNode(nodesStore)
@@ -212,6 +218,15 @@ onMounted(() => {
             设为当前
           </Button>
           <span v-else class="text-xs text-muted-foreground">插件启用即保持连接</span>
+          <Button
+            v-if="localNodeRecord"
+            variant="ghost"
+            size="sm"
+            @click="onManage(localNodeRecord)"
+          >
+            <Settings class="h-4 w-4" />
+            管理
+          </Button>
         </div>
       </div>
     </div>
@@ -273,6 +288,10 @@ onMounted(() => {
                   >
                     <Loader2 v-if="loggingId === row.id" class="h-4 w-4 animate-spin" />
                     登录
+                  </Button>
+                  <Button v-if="row.token" variant="ghost" size="sm" @click="onManage(row)">
+                    <Settings class="h-4 w-4" />
+                    管理
                   </Button>
                   <Button v-if="row.token" variant="ghost" size="sm" @click="onLogout(row)">
                     登出
