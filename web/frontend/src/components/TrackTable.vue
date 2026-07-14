@@ -5,6 +5,7 @@ import { useToast } from '@/components/ui/toast/use-toast'
 import { usePlayerStore } from '../stores/player'
 import { useAuthStore } from '../stores/auth'
 import { useLibraryStore } from '../stores/library'
+import { useNodesStore } from '../stores/nodes'
 import { getCoverUrl, updateMetadataField, addTracksToPlaylist } from '../api/node'
 import { addClientPlaylistItems } from '../api/client_playlist'
 import AddToPlaylistDialog from './AddToPlaylistDialog.vue'
@@ -49,6 +50,7 @@ const player = usePlayerStore()
 const toast = useToast()
 const authStore = useAuthStore()
 const libraryStore = useLibraryStore()
+const nodesStore = useNodesStore()
 
 // 加入到播放列表对话框
 const addToPlaylistVisible = ref(false)
