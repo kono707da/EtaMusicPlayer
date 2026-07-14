@@ -150,11 +150,13 @@ export async function getWatchDirs(node) {
 
 // 浏览目录结构（用于路径选择器）
 // path 为空字符串/null 时返回盘符列表
-export async function browseDirectories(node, path = '') {
+// include_files=true 时附带 m3u/m3u8 文件，供 m3u 导入选择
+export async function browseDirectories(node, path = '', includeFiles = false) {
   const client = createNodeClient(node)
-  const resp = await client.get('/api/watch-dirs/browse', {
-    params: path ? { path } : {}
-  })
+  const params = {}
+  if (path) params.path = path
+  if (includeFiles) params.include_files = 'true'
+  const resp = await client.get('/api/watch-dirs/browse', { params })
   return resp.data
 }
 
@@ -466,5 +468,25 @@ export async function reportPlayEvent(node, payload) {
 export async function getDashboard(node) {
   const client = createNodeClient(node)
   const resp = await client.get('/api/stats/dashboard')
+  return resp.data
+}
+
+// ============ m3u 导入 ============
+
+// 提交 m3u 导入任务
+// payload: {
+//   watch_dir_id: number,         目标监控目录 ID（音乐文件入库目标）
+//   mode: 'copy' | 'move',        复制或剪切音乐文件
+//   m3u_path?: string,            单个 m3u 文件绝对路径
+//   folder_path?: string,         文件夹绝对路径（递归查找 m3u）
+//   playlist_name?: string        仅 m3u_path 模式下自定义播放列表名
+// }
+export async function submitM3uImport(node, payload) {
+  const client = createNodeClient(node)
+  const resp = await client.post('/api/tasks', {
+    task_type: 'import_m3u',
+    priority: 10,
+    payload
+  })
   return resp.data
 }

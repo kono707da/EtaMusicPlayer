@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/watch-dirs", tags=["watch-dirs"])
 class DirEntry(BaseModel):
     name: str
     path: str
+    is_file: bool = False
 
 
 class BrowseResult(BaseModel):
@@ -55,9 +56,10 @@ def list_watch_dirs(
 @router.get("/browse", response_model=BrowseResult)
 def browse_directory(
     path: str | None = Query(default=None, description="要浏览的目录；为空则返回盘符/根"),
+    include_files: bool = Query(default=False, description="是否包含 m3u/m3u8 文件"),
     user: User = Depends(require_admin),
 ) -> BrowseResult:
-    """浏览目录结构，仅返回子目录，用于前端路径选择器"""
+    """浏览目录结构，默认仅返回子目录；include_files=True 时附带 m3u/m3u8 文件"""
     # 1. path 为空：Windows 返回盘符列表；其他平台返回根 /
     if not path or not path.strip():
         if os.name == "nt":
@@ -79,15 +81,19 @@ def browse_directory(
     entries: list[DirEntry] = []
     try:
         for child in sorted(target.iterdir(), key=lambda p: p.name.lower()):
-            if not child.is_dir():
-                continue
-            # 跳过无权限访问的目录避免后续报错
-            try:
-                if child.stat() is None:
+            if child.is_dir():
+                # 跳过无权限访问的目录避免后续报错
+                try:
+                    if child.stat() is None:
+                        continue
+                except (PermissionError, OSError):
                     continue
-            except (PermissionError, OSError):
-                continue
-            entries.append(DirEntry(name=child.name, path=str(child)))
+                entries.append(DirEntry(name=child.name, path=str(child)))
+            elif include_files and child.is_file():
+                if child.suffix.lower() in (".m3u", ".m3u8"):
+                    entries.append(
+                        DirEntry(name=child.name, path=str(child), is_file=True)
+                    )
     except (PermissionError, OSError) as e:
         raise HTTPException(status_code=403, detail=f"无法访问目录: {e}")
 
