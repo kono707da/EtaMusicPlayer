@@ -24,7 +24,8 @@ pipeline {
                 // 清理旧镜像，避免 tag 指向残留的 manifest list
                 sh "docker rmi ${IMAGE_NAME} ${IMAGE_TAG} ${IMAGE_LATEST} 2>/dev/null || true"
                 // 内联 DOCKER_BUILDKIT=0 强制禁用 BuildKit，用经典 builder 生成普通 manifest（非 manifest list）
-                sh "DOCKER_BUILDKIT=0 docker build -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
+                // --no-cache 避免命中旧的前端构建层缓存导致部署旧版本前端代码
+                sh "DOCKER_BUILDKIT=0 docker build --no-cache -t ${IMAGE_NAME} -t ${IMAGE_TAG} -t ${IMAGE_LATEST} ."
             }
         }
 
