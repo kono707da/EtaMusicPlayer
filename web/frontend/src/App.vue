@@ -124,30 +124,41 @@ async function refreshRemoteTokens() {
     const remoteNodes = await listRemoteNodes()
     await Promise.allSettled(
       remoteNodes.map(async (row) => {
+        const storeNodeId = `remote-${row.id}`
         try {
-          const result = await loginRemoteNode(row.id)
-          // 用 baseUrl 匹配更新 store 中的节点 token
-          const existing = nodesStore.nodes.find((n) => n.baseUrl === row.url)
-          if (existing) {
-            nodesStore.updateNode(existing.id, {
-              token: result.access_token,
-              userInfo: result.user_info,
-              name: row.name,
-              baseUrl: row.url
-            })
-          } else {
-            // store 中没有该远程节点（如清过浏览器缓存/换浏览器），添加进去
-            // password 不暴露给前端，远程节点 token 由后端 /login 接口刷新
+          // 先做版本校验
+          let existing = nodesStore.nodes.find((n) => n.baseUrl === row.url)
+          if (!existing) {
             nodesStore.addNode({
-              id: `remote-${row.id}`,
+              id: storeNodeId,
               name: row.name,
               baseUrl: row.url,
               username: row.username || '',
               password: '',
-              token: result.access_token,
-              userInfo: result.user_info
+              token: '',
+              userInfo: null
             })
+            existing = nodesStore.getNode(storeNodeId)
           }
+
+          const compat = await nodesStore.checkNodeVersion(storeNodeId)
+          if (compat.result === 'incompatible') {
+            // 版本不兼容：清除 token，不使用该节点
+            if (existing && existing.token) {
+              nodesStore.updateNode(storeNodeId, { token: '', userInfo: null })
+            }
+            console.warn(`节点 ${row.name} 版本不兼容：${compat.reason}`)
+            return
+          }
+
+          // 版本兼容，继续登录
+          const result = await loginRemoteNode(row.id)
+          nodesStore.updateNode(storeNodeId, {
+            token: result.access_token,
+            userInfo: result.user_info,
+            name: row.name,
+            baseUrl: row.url
+          })
         } catch (e) {
           // 401/403 表示认证失败，清除旧 token
           const status = e.response?.status

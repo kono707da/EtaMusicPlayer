@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from eta_node.plugin import bootstrap, create_local_node_app
+from eta_node.version import NODE_VERSION
 
 logger = logging.getLogger("eta_node.standalone")
 
@@ -22,7 +23,7 @@ def create_standalone_app() -> FastAPI:
     app = FastAPI(
         title="EtaMusic Node",
         description="EtaMusic 本地音乐库节点（独立运行模式）",
-        version="1.0.0",
+        version=NODE_VERSION,
     )
 
     app.add_middleware(
