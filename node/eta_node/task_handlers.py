@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from eta_node.models import NodeTask, TrackStats, WatchDir
+from eta_node.m3u_importer import handle_import_m3u
 from eta_node.scanner import scan_directory
 from eta_node.task_executor import TaskExecutor, write_audit_log
 
@@ -168,4 +169,5 @@ def register_all_handlers(executor: TaskExecutor) -> None:
     """注册所有内置任务处理器"""
     executor.register_handler("scan", _handle_scan)
     executor.register_handler("upload", _handle_upload)
-    logger.info("已注册 %d 个任务处理器", 2)
+    executor.register_handler("import_m3u", handle_import_m3u)
+    logger.info("已注册 %d 个任务处理器", 3)

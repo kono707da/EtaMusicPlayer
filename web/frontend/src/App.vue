@@ -278,8 +278,8 @@ async function refreshRemoteTokens() {
           </template>
         </nav>
 
-        <!-- 管理功能分组 -->
-        <template v-if="isAdmin">
+        <!-- 管理功能分组：仅在节点设置页或管理功能页显示，其他页面隐藏以保持工作台简洁 -->
+        <template v-if="isAdmin && (currentPath === '/nodes' || currentPath.startsWith('/admin/'))">
           <div class="mt-5 px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
             管理功能
           </div>

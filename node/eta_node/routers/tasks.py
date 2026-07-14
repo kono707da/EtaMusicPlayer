@@ -38,6 +38,7 @@ _ALLOWED_TASK_TYPES = {
     "permission_grant",
     "permission_revoke",
     "dedup_update",
+    "import_m3u",
 }
 
 

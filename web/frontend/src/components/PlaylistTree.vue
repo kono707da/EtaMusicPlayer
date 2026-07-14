@@ -9,10 +9,11 @@ import { useNodesStore } from '../stores/nodes'
 import { useLibraryStore } from '../stores/library'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useConfirm } from '@/composables/use-confirm'
-import { createPlaylist, updatePlaylist, deletePlaylist } from '../api/node'
-import { createClientPlaylist, updateClientPlaylist, deleteClientPlaylist } from '../api/client_playlist'
+import { updatePlaylist, deletePlaylist } from '../api/node'
+import { updateClientPlaylist, deleteClientPlaylist } from '../api/client_playlist'
 import { Button } from '@/components/ui/button'
 import { Empty } from '@/components/ui/empty'
+import NewPlaylistDialog from './NewPlaylistDialog.vue'
 
 const emit = defineEmits(['select'])
 const router = useRouter()
@@ -120,6 +121,9 @@ const treeData = computed(() => {
 const currentKey = ref('')
 const expandedIds = ref([])
 
+// 新建播放列表弹窗
+const newPlaylistDialog = ref({ open: false, group: null })
+
 // 原地重命名状态
 const renaming = ref({ id: '', value: '', saving: false })
 const renameInputEl = ref(null)
@@ -173,25 +177,17 @@ function onNodeClick(data) {
 }
 
 /**
- * 在节点/客户端分组下新建播放列表（默认名，可在树中双击重命名）
+ * 打开新建播放列表弹窗
  */
-async function onCreatePlaylist(group) {
-  try {
-    if (group.type === 'node-group') {
-      const node = nodesStore.getNode(group.nodeId)
-      if (!node || !node.token) {
-        toast.error('节点未登录，无法创建播放列表')
-        return
-      }
-      await createPlaylist(node, { name: '新建播放列表', description: '' })
-    } else if (group.type === 'client-group') {
-      await createClientPlaylist('新建播放列表', '')
-    }
-    await libraryStore.refreshAllPlaylists()
-    toast.success('已创建，双击可重命名')
-  } catch (e) {
-    toast.error('创建播放列表失败', e?.response?.data?.detail || e.message || String(e), e)
-  }
+function onCreatePlaylist(group) {
+  newPlaylistDialog.value = { open: true, group }
+}
+
+/**
+ * 弹窗创建/导入完成回调
+ */
+async function onPlaylistCreated() {
+  await libraryStore.refreshAllPlaylists()
 }
 
 // ==================== 双击重命名 ====================
@@ -442,5 +438,12 @@ onMounted(() => {
         删除播放列表
       </button>
     </div>
+
+    <!-- 新建播放列表弹窗 -->
+    <NewPlaylistDialog
+      v-model:open="newPlaylistDialog.open"
+      :group="newPlaylistDialog.group"
+      @created="onPlaylistCreated"
+    />
   </div>
 </template>
