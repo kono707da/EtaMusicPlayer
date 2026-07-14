@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "updated_at": "2026-07-09T00:00:00Z",
+  "schema_version": 2,
+  "updated_at": "2026-07-15T00:00:00Z",
   "plugins": [
     {
       "name": "local_node",
@@ -14,7 +14,27 @@
       "entry": "eta_node/plugin.py",
       "requirements": "node/requirements.txt",
       "category": "core",
-      "icon": "hard-drive"
+      "icon": "hard-drive",
+      "type": "plugin",
+      "dependencies": [],
+      "sha256": ""
+    },
+    {
+      "name": "shared",
+      "package": "eta_shared",
+      "display_name": "共享库",
+      "description": "插件共享库：远程节点客户端和音频标签写入",
+      "version": "1.0.0",
+      "author": "EtaMusic",
+      "eta_web_version": ">=1.0.0,<2.0.0",
+      "directory": "plugins/shared",
+      "entry": "",
+      "requirements": "plugins/shared/requirements.txt",
+      "category": "library",
+      "icon": "package",
+      "type": "library",
+      "dependencies": [],
+      "sha256": ""
     },
     {
       "name": "asmr_one",
@@ -28,7 +48,10 @@
       "entry": "eta_asmr/plugin.py",
       "requirements": "plugins/asmr_one/requirements.txt",
       "category": "download",
-      "icon": "headphones"
+      "icon": "headphones",
+      "type": "plugin",
+      "dependencies": [{"name": "shared", "version": ">=1.0.0"}],
+      "sha256": ""
     },
     {
       "name": "bili_audio",
@@ -42,7 +65,10 @@
       "entry": "eta_bili/plugin.py",
       "requirements": "plugins/bili_audio/requirements.txt",
       "category": "download",
-      "icon": "music"
+      "icon": "music",
+      "type": "plugin",
+      "dependencies": [{"name": "shared", "version": ">=1.0.0"}],
+      "sha256": ""
     }
   ]
 }

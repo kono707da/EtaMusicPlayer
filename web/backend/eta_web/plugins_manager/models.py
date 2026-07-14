@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from eta_web.plugins_manager.database import Base
@@ -19,6 +19,10 @@ class Plugin(Base):
     - name：插件目录名（唯一）
     - enabled：是否启用（启动时只加载 enabled=True 的插件）
     - 来自 manifest.py 的元数据（description/version/author）
+    - is_dependency：是否为依赖库（如 shared，不注册路由，仅提供 import）
+    - dependent_by：被哪些插件依赖（JSON 数组字符串）
+    - is_library：是否为库类型（无 plugin.py）
+    - dependencies：声明的依赖（JSON 数组字符串）
     """
 
     __tablename__ = "plugins"
@@ -33,6 +37,11 @@ class Plugin(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False
     )
+    # schema v2 新增字段
+    is_dependency: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    dependent_by: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    is_library: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    dependencies: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
 
 
 class RemoteNode(Base):

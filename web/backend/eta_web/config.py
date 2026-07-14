@@ -30,11 +30,7 @@ class Settings(BaseModel):
     jwt_secret: str = ""
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440
-    plugins_dirs: list[str] = [
-        "../../node",
-        "../../plugins/asmr_one",
-        "../../plugins/bili_audio",
-    ]
+    plugins_dirs: list[str] = []
     plugins_enabled: list[str] = []
     plugin_registry_url: str = "https://raw.githubusercontent.com/kono707da/EtaMusicPlayer/main/plugins.json"
     plugin_repo_archive_url: str = "https://github.com/kono707da/EtaMusicPlayer/archive/refs/heads/main.zip"

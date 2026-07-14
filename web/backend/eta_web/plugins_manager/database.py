@@ -71,6 +71,29 @@ def _auto_migrate() -> None:
                 "ALTER TABLE remote_nodes ADD COLUMN is_active BOOLEAN DEFAULT 0 NOT NULL"
             )
             conn.commit()
+
+        # plugins 表 v2 新增字段
+        p_cols = {row[1] for row in conn.execute("PRAGMA table_info(plugins)")}
+        if "is_dependency" not in p_cols:
+            conn.execute(
+                "ALTER TABLE plugins ADD COLUMN is_dependency BOOLEAN DEFAULT 0 NOT NULL"
+            )
+            conn.commit()
+        if "dependent_by" not in p_cols:
+            conn.execute(
+                "ALTER TABLE plugins ADD COLUMN dependent_by TEXT DEFAULT '[]' NOT NULL"
+            )
+            conn.commit()
+        if "is_library" not in p_cols:
+            conn.execute(
+                "ALTER TABLE plugins ADD COLUMN is_library BOOLEAN DEFAULT 0 NOT NULL"
+            )
+            conn.commit()
+        if "dependencies" not in p_cols:
+            conn.execute(
+                "ALTER TABLE plugins ADD COLUMN dependencies TEXT DEFAULT '[]' NOT NULL"
+            )
+            conn.commit()
     except sqlite3.OperationalError:
         pass  # 表不存在，create_all 会处理
     finally:
