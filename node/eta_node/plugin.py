@@ -32,12 +32,14 @@ from eta_node.routers import (
     quality,
     scan,
     stats,
+    system,
     tasks,
     tracks,
     upload,
     users,
     watch_dirs,
 )
+from eta_node.version import NODE_VERSION
 
 logger = logging.getLogger("etamusic.plugins.local_node")
 
@@ -45,7 +47,7 @@ logger = logging.getLogger("etamusic.plugins.local_node")
 PLUGIN_META = {
     "name": "local_node",
     "description": "本地节点：完整的音乐库服务（扫描/流式/播放列表/用户/权限/元数据/去重/音质）",
-    "version": "1.0.0",
+    "version": NODE_VERSION,
     "author": "EtaMusic",
     "eta_web_version": ">=1.0.0,<2.0.0",
 }
@@ -129,7 +131,7 @@ def create_local_node_app() -> FastAPI:
     sub_app = FastAPI(
         title="EtaMusic 本地节点",
         description="local_node 插件提供的完整节点服务",
-        version="1.0.0",
+        version=NODE_VERSION,
     )
 
     # CORS（子应用需独立配置）
@@ -143,6 +145,7 @@ def create_local_node_app() -> FastAPI:
     )
 
     # 注册全部节点路由
+    sub_app.include_router(system.router)
     sub_app.include_router(auth.router)
     sub_app.include_router(tracks.router)
     sub_app.include_router(playlists.router)

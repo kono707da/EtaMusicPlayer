@@ -39,6 +39,7 @@ export const usePluginsStore = defineStore('plugins', () => {
    * 同步本地节点到 nodes store
    * - 插件可用且已加载：自动写入/更新本地节点记录（含 token）
    * - 插件不可用：清除 nodes store 中的本地节点记录
+   * - 版本校验：不兼容时清除 token 不使用该节点；部分兼容时保留但记录缺失功能
    * 返回本地节点状态
    */
   async function syncLocalNode(nodesStore) {
@@ -59,7 +60,9 @@ export const usePluginsStore = defineStore('plugins', () => {
       if (status.access_token) {
         const token = status.access_token
         const userInfo = status.user_info
+        let nodeId
         if (existing) {
+          nodeId = existing.id
           if (existing.token !== token) {
             nodesStore.updateNode(existing.id, { token, userInfo })
           }
@@ -70,7 +73,20 @@ export const usePluginsStore = defineStore('plugins', () => {
             username: 'admin',
             password: 'admin123'
           })
+          nodeId = added.id
           nodesStore.updateNode(added.id, { token, userInfo })
+        }
+
+        // 版本校验
+        try {
+          const compat = await nodesStore.checkNodeVersion(nodeId)
+          if (compat.result === 'incompatible') {
+            // 不兼容：清除 token，不使用本地节点
+            nodesStore.updateNode(nodeId, { token: '', userInfo: null })
+            console.warn(`本地节点版本不兼容：${compat.reason}`)
+          }
+        } catch (e) {
+          // 版本校验失败，静默处理（保留 token，避免阻断旧版 node）
         }
       }
 

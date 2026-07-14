@@ -9,6 +9,13 @@ import { createNodeClient } from './client'
 
 // ============ 认证 ============
 
+// 获取 node 版本与功能能力信息（无需认证）
+// 返回 { version, api_version, min_client_version, features }
+export async function getNodeVersion(node) {
+  const resp = await axios.get(`${node.baseUrl.replace(/\/$/, '')}/api/version`)
+  return resp.data
+}
+
 // 登录：返回 {access_token, token_type, user}
 export async function login(node, payload) {
   // payload: {username, password}

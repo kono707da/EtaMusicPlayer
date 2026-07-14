@@ -34,7 +34,8 @@ import {
   deleteRemoteNode,
   loginRemoteNode
 } from '../api/plugin'
-import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, CircleAlert, Settings } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, CircleAlert, Settings, AlertTriangle, Info, CheckCircle2 } from 'lucide-vue-next'
+import { FEATURE_REGISTRY } from '../config/version'
 
 const route = useRoute()
 const router = useRouter()
@@ -82,15 +83,35 @@ async function loadRemoteNodes() {
   }
 }
 
-// 健康检测 + 登录一步完成：直接调用 login 获取 token
-// 成功 => online + 已登录；认证失败 => auth_failed；连接失败 => offline
+// 健康检测 + 版本校验 + 登录
+// 流程：先版本校验 → 不兼容则拒绝连接；兼容则登录获取 token
+// 成功 => online + 已登录；认证失败 => auth_failed；版本不兼容 => incompatible；连接失败 => offline
 async function checkOneHealth(row, { silent = false } = {}) {
   nodeHealth[row.id] = { status: 'checking', message: '', checking: true }
+  const nodeId = `remote-${row.id}`
+
+  // Step 1: 版本校验（在登录前执行，避免与不兼容的 node 交互）
+  try {
+    const compat = await nodesStore.checkNodeVersion(nodeId)
+    if (compat.result === 'incompatible') {
+      nodeHealth[row.id] = {
+        status: 'incompatible',
+        message: compat.reason,
+        checking: false
+      }
+      if (!silent) toast.error('版本不兼容', compat.reason)
+      return
+    }
+  } catch (e) {
+    // 版本校验失败（网络不可达等），继续尝试登录以获取更准确的错误信息
+  }
+
+  // Step 2: 登录验证
   try {
     const result = await loginRemoteNode(row.id)
     // 登录成功 => 在线
     nodeHealth[row.id] = { status: 'online', message: '连接正常', checking: false }
-    // 更新 nodesStore 中的 token
+    // 更新 nodesStore 中的 token（同时保留版本校验结果）
     syncRemoteNodeToStore(row, result)
     if (!silent) toast.success(`已连接：${row.name}`)
   } catch (e) {
@@ -202,6 +223,33 @@ async function saveRemoteNode() {
     // 登录验证：必须成功才保留节点
     const nodeId = editingRemoteNodeId.value || createdNodeId
     try {
+      // 先做版本校验
+      const storeNodeId = `remote-${nodeId}`
+      // 确保 store 中已有该节点（版本校验需要 baseUrl）
+      const existing = nodesStore.nodes.find((n) => n.id === storeNodeId)
+      if (!existing) {
+        nodesStore.addNode({
+          id: storeNodeId,
+          name: remoteNodeForm.name,
+          baseUrl: payload.url,
+          username: remoteNodeForm.username,
+          password: '',
+          token: '',
+          userInfo: null
+        })
+      }
+      const compat = await nodesStore.checkNodeVersion(storeNodeId)
+      if (compat.result === 'incompatible') {
+        // 版本不兼容：删除新建的节点配置，不保留
+        if (isNew && createdNodeId) {
+          try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
+        }
+        nodesStore.removeNode(storeNodeId)
+        remoteNodeSaveError.value = compat.reason
+        toast.error('版本不兼容', compat.reason)
+        return
+      }
+
       const loginResult = await loginRemoteNode(nodeId)
       // 登录成功，同步到 store
       const row = remoteNodeList.value.find((r) => r.id === nodeId) || {
@@ -213,7 +261,15 @@ async function saveRemoteNode() {
       syncRemoteNodeToStore(row, loginResult)
       nodeHealth[nodeId] = { status: 'online', message: '连接正常', checking: false }
       nodesStore.authVersion++
-      toast.success(isNew ? '节点已添加并登录' : '节点已更新并登录')
+      // 部分兼容时提示
+      if (compat.result === 'partial') {
+        const labels = compat.missingFeatures
+          .map((f) => FEATURE_REGISTRY[f]?.label || f)
+          .join('、')
+        toast.warning('已连接但部分功能不可用', `不可用：${labels}`)
+      } else {
+        toast.success(isNew ? '节点已添加并登录' : '节点已更新并登录')
+      }
       remoteNodeDialogVisible.value = false
       await loadRemoteNodes()
       if (route.query.redirect) {
@@ -272,6 +328,27 @@ async function confirmDeleteRemoteNode(row) {
   } catch (e) {
     toast.error('删除远程节点失败', e.response?.data?.detail || e.message, e)
   }
+}
+
+// 节点详情对话框（展示版本不兼容/部分功能缺失等信息）
+const detailDialogVisible = ref(false)
+const detailNode = ref(null)
+const detailCompat = ref(null)
+
+function showNodeDetail(row) {
+  const nodeId = `remote-${row.id}`
+  const node = nodesStore.getNode(nodeId)
+  detailNode.value = { ...row, nodeId }
+  detailCompat.value = node?.compatibility || null
+  detailDialogVisible.value = true
+}
+
+function getFeatureLabel(feat) {
+  return FEATURE_REGISTRY[feat]?.label || feat
+}
+
+function getFeatureDescription(feat) {
+  return FEATURE_REGISTRY[feat]?.description || ''
 }
 
 onMounted(() => {
@@ -376,6 +453,13 @@ onMounted(() => {
                   ● 在线
                 </span>
                 <span
+                  v-else-if="nodeHealth[row.id]?.status === 'incompatible'"
+                  class="inline-flex items-center gap-1 text-xs text-destructive font-medium"
+                  :title="nodeHealth[row.id].message"
+                >
+                  ● 版本不兼容
+                </span>
+                <span
                   v-else-if="nodeHealth[row.id]?.status === 'auth_failed'"
                   class="inline-flex items-center gap-1 text-xs text-amber-500 font-medium"
                   :title="nodeHealth[row.id].message"
@@ -401,6 +485,15 @@ onMounted(() => {
                   >
                     <Settings class="h-4 w-4" />
                     管理
+                  </Button>
+                  <Button
+                    v-if="nodeHealth[row.id]?.status === 'incompatible' || nodeHealth[row.id]?.status === 'auth_failed' || nodeHealth[row.id]?.status === 'offline'"
+                    variant="ghost"
+                    size="sm"
+                    @click="showNodeDetail(row)"
+                  >
+                    <Info class="h-4 w-4" />
+                    详情
                   </Button>
                   <Button variant="ghost" size="sm" @click="openEditRemoteNode(row)">
                     <Pencil class="h-4 w-4" />
@@ -497,6 +590,85 @@ onMounted(() => {
             <Loader2 v-if="remoteNodeSaving" class="h-4 w-4 animate-spin" />
             保存
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- 节点详情对话框（版本校验信息） -->
+    <Dialog :open="detailDialogVisible" @update:open="(v) => !v && (detailDialogVisible = false)">
+      <DialogContent class="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>节点详情：{{ detailNode?.name }}</DialogTitle>
+          <DialogDescription>
+            版本校验与功能兼容性信息
+          </DialogDescription>
+        </DialogHeader>
+
+        <div v-if="detailCompat" class="space-y-3">
+          <!-- 兼容性状态 -->
+          <div class="flex items-start gap-2 rounded-md border p-3"
+            :class="{
+              'border-destructive/40 bg-destructive/5': detailCompat.result === 'incompatible',
+              'border-amber-500/40 bg-amber-500/5': detailCompat.result === 'partial',
+              'border-emerald-500/40 bg-emerald-500/5': detailCompat.result === 'ok'
+            }"
+          >
+            <CircleAlert v-if="detailCompat.result === 'incompatible'" class="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
+            <AlertTriangle v-else-if="detailCompat.result === 'partial'" class="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+            <component :is="CheckCircle2" v-else class="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+            <div class="flex-1 text-sm">
+              <p v-if="detailCompat.result === 'incompatible'" class="font-medium text-destructive">
+                版本不兼容，无法连接
+              </p>
+              <p v-else-if="detailCompat.result === 'partial'" class="font-medium text-amber-600">
+                部分功能不可用
+              </p>
+              <p v-else class="font-medium text-emerald-600">完全兼容</p>
+              <p v-if="detailCompat.reason" class="mt-1 text-muted-foreground">{{ detailCompat.reason }}</p>
+            </div>
+          </div>
+
+          <!-- 版本信息 -->
+          <div v-if="detailCompat.versionInfo" class="rounded-md border border-border p-3 space-y-1.5 text-sm">
+            <div class="flex justify-between">
+              <span class="text-muted-foreground">Node 版本</span>
+              <span class="font-mono">v{{ detailCompat.versionInfo.version }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-muted-foreground">API 协议版本</span>
+              <span class="font-mono">v{{ detailCompat.versionInfo.api_version }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-muted-foreground">支持功能数</span>
+              <span class="font-mono">{{ detailCompat.versionInfo.features?.length || 0 }} 项</span>
+            </div>
+          </div>
+
+          <!-- 缺失功能列表 -->
+          <div v-if="detailCompat.missingFeatures && detailCompat.missingFeatures.length > 0">
+            <p class="text-sm font-medium mb-2">不可用的功能：</p>
+            <div class="space-y-1">
+              <div
+                v-for="feat in detailCompat.missingFeatures"
+                :key="feat"
+                class="flex items-start gap-2 rounded-md bg-muted/40 px-3 py-1.5 text-sm"
+              >
+                <span class="font-medium">{{ getFeatureLabel(feat) }}</span>
+                <span class="text-muted-foreground text-xs mt-0.5">{{ getFeatureDescription(feat) }}</span>
+              </div>
+            </div>
+            <p class="text-xs text-muted-foreground mt-2">
+              这些功能已禁用，请升级 node 到最新版本以获得完整体验。
+            </p>
+          </div>
+        </div>
+
+        <div v-else class="text-sm text-muted-foreground py-4 text-center">
+          暂无版本校验信息，请点击「重新检测」
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" @click="detailDialogVisible = false">关闭</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

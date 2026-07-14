@@ -1,6 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as apiLogin } from '../api/node'
+import { login as apiLogin, getNodeVersion as apiGetNodeVersion } from '../api/node'
+import { checkCompatibility, COMPAT_RESULT } from '../utils/version-check'
+import {
+  CLIENT_VERSION,
+  CLIENT_API_VERSION,
+  MIN_NODE_VERSION,
+  CLIENT_FEATURES,
+  REQUIRED_FEATURES,
+  FEATURE_REGISTRY
+} from '../config/version'
 
 const STORAGE_KEY = 'etamusic_nodes'
 
@@ -9,6 +18,7 @@ const STORAGE_KEY = 'etamusic_nodes'
  * - 增删改查节点配置
  * - 持久化到 localStorage
  * - 节点登录/登出（登录后才会在工作台展示内容）
+ * - 版本校验：登录前检查 node 版本与功能兼容性
  *
  * 多节点聚合架构：本应用是"客户端优先"的多节点聚合客户端，
  * 不存在"切换到某一节点"的概念。所有已登录节点的内容同时可用。
@@ -68,7 +78,10 @@ export const useNodesStore = defineStore('nodes', () => {
       username: node.username || '',
       password: node.password || '',
       token: node.token || '',
-      userInfo: node.userInfo || null
+      userInfo: node.userInfo || null,
+      // 版本校验结果
+      versionInfo: node.versionInfo || null,
+      compatibility: node.compatibility || null
     }
     nodes.value.push(newNode)
     persist()
@@ -150,6 +163,82 @@ export const useNodesStore = defineStore('nodes', () => {
     return nodes.value.find((n) => n.id === id) || null
   }
 
+  /**
+   * 对指定节点执行版本校验
+   * 获取 node /api/version 并与客户端版本配置对比
+   *
+   * @param {string|number} id - 节点 ID
+   * @returns {Promise<Object>} 校验结果
+   *   { result, reason, versionInfo, missingFeatures, unsupportedFeatures }
+   *   result: 'ok' | 'incompatible' | 'partial'
+   */
+  async function checkNodeVersion(id) {
+    const node = nodes.value.find((n) => n.id === id)
+    if (!node) throw new Error('节点不存在')
+
+    let versionInfo
+    try {
+      versionInfo = await apiGetNodeVersion(node)
+    } catch (e) {
+      // 无法获取版本信息：可能是 node 版本过低（没有 /api/version），视为不兼容
+      const compat = {
+        result: COMPAT_RESULT.INCOMPATIBLE,
+        reason: '无法获取版本信息，node 版本过低或不可达',
+        versionInfo: null,
+        missingFeatures: [],
+        unsupportedFeatures: []
+      }
+      updateNode(id, { versionInfo: null, compatibility: compat })
+      return compat
+    }
+
+    const compat = checkCompatibility(versionInfo, {
+      clientVersion: CLIENT_VERSION,
+      clientApiVersion: CLIENT_API_VERSION,
+      minNodeVersion: MIN_NODE_VERSION,
+      clientFeatures: CLIENT_FEATURES,
+      requiredFeatures: REQUIRED_FEATURES,
+      featureRegistry: FEATURE_REGISTRY
+    })
+
+    const result = {
+      result: compat.result,
+      reason: compat.reason,
+      versionInfo,
+      missingFeatures: compat.missingFeatures,
+      unsupportedFeatures: compat.unsupportedFeatures
+    }
+    updateNode(id, { versionInfo, compatibility: result })
+    return result
+  }
+
+  /**
+   * 检查指定节点是否支持某功能
+   * 未做过版本校验的节点默认视为支持（兼容旧逻辑）
+   */
+  function hasFeature(id, feature) {
+    const node = nodes.value.find((n) => n.id === id)
+    if (!node) return false
+    if (!node.compatibility || !node.versionInfo) return true
+    if (node.compatibility.result === COMPAT_RESULT.INCOMPATIBLE) return false
+    return !node.compatibility.missingFeatures.includes(feature)
+  }
+
+  /**
+   * 获取节点不支持的功能列表（含中文标签）
+   * 返回 [{ feature, label, description }] 数组
+   */
+  function getMissingFeatures(id) {
+    const node = nodes.value.find((n) => n.id === id)
+    if (!node || !node.compatibility) return []
+    return node.compatibility.missingFeatures
+      .map((f) => ({
+        feature: f,
+        label: FEATURE_REGISTRY[f]?.label || f,
+        description: FEATURE_REGISTRY[f]?.description || ''
+      }))
+  }
+
   // 初始化时加载
   load()
 
@@ -165,6 +254,9 @@ export const useNodesStore = defineStore('nodes', () => {
     loginNode,
     logoutNode,
     isLoggedIn,
-    getNode
+    getNode,
+    checkNodeVersion,
+    hasFeature,
+    getMissingFeatures
   }
 })

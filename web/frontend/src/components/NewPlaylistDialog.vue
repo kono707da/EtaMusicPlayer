@@ -56,6 +56,12 @@ const node = computed(() => {
   return nodesStore.getNode(props.group?.nodeId)
 })
 
+// 该节点是否支持 m3u 导入功能
+const supportsM3uImport = computed(() => {
+  if (!isNodeGroup.value || !node.value) return false
+  return nodesStore.hasFeature(node.value.id, 'import_m3u')
+})
+
 const canSubmit = computed(() => {
   if (submitting.value) return false
   const name = playlistName.value.trim()
@@ -300,15 +306,18 @@ function onCancel() {
             />
             空白播放列表
           </Label>
-          <Label class="cursor-pointer">
+          <Label :class="supportsM3uImport ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'">
             <input
               type="radio"
               value="m3u"
               v-model="importMode"
-              :disabled="submitting"
+              :disabled="submitting || !supportsM3uImport"
               class="mr-2"
             />
             从本机 m3u 文件导入
+            <span v-if="!supportsM3uImport" class="text-xs text-muted-foreground ml-1">
+              （节点版本不支持）
+            </span>
           </Label>
         </div>
 
