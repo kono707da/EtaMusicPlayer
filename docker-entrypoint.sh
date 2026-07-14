@@ -6,7 +6,7 @@ PYLIBS_DIR="$DEPS_DIR/pylibs"
 BIN_DIR="$DEPS_DIR/bin"
 MARKER="$DEPS_DIR/.installed"
 
-mkdir -p "$DEPS_DIR" "$PYLIBS_DIR" "$BIN_DIR"
+mkdir -p "$DEPS_DIR" "$PYLIBS_DIR" "$BIN_DIR" /app/node /app/plugins
 
 if [ ! -f "$MARKER" ]; then
     echo "[DEPS] First run: installing runtime dependencies..."
@@ -27,13 +27,9 @@ if [ ! -f "$MARKER" ]; then
         rm -rf "$TMP_DIR"
     fi
 
-    echo "[DEPS] Installing Python packages..."
+    echo "[DEPS] Installing Python packages (web backend only)..."
     pip install --no-cache-dir --target="$PYLIBS_DIR" \
-        -r /app/web/backend/requirements.txt \
-        -r /app/node/requirements.txt \
-        -r /app/plugins/asmr_one/requirements.txt \
-        -r /app/plugins/bili_audio/requirements.txt \
-        -r /app/plugins/shared/requirements.txt
+        -r /app/web/backend/requirements.txt
 
     touch "$MARKER"
     echo "[DEPS] Runtime dependencies installed successfully."

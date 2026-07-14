@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 
@@ -20,6 +20,11 @@ class PluginOut(BaseModel):
     updated_at: datetime
     loaded: bool = False
     files_present: bool = True
+    # schema v2 新增
+    is_dependency: bool = False
+    dependent_by: str = ""  # JSON 数组字符串，如 '["asmr_one", "bili_audio"]'
+    is_library: bool = False
+    dependencies: str = ""  # JSON 数组字符串
 
     model_config = {"from_attributes": True}
 
@@ -63,6 +68,10 @@ class OnlinePluginInfo(BaseModel):
     directory: str = ""
     category: str = "other"
     icon: str = "puzzle"
+    # schema v2 新增
+    type: str = "plugin"
+    dependencies: list[dict[str, Any]] = []
+    is_library: bool = False
     online_available: bool = False
     installed: bool = False
     enabled: bool = False
@@ -78,6 +87,17 @@ class PluginInstallResponse(BaseModel):
     success: bool
     message: str
     details: str = ""
+    dependencies_installed: list[str] = []
+
+
+class PluginImportResponse(BaseModel):
+    """手动导入插件的响应"""
+
+    success: bool
+    message: str
+    details: str = ""
+    plugin_name: str = ""
+    dependencies_installed: list[str] = []
 
 
 class OnlineRegistryStatus(BaseModel):

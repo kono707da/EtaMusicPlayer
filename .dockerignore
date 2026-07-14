@@ -1,28 +1,33 @@
-.git/
-.trae/
-__pycache__/
-*.py[cod]
-*.pyo
-.venv/
-venv/
-node_modules/
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+node/dist/
+node/build/
+frontend/dist/
+web/frontend/node_modules/
 web/frontend/dist/
-*.db
-*.db-journal
-*.db-shm
-*.db-wal
-*.log
-*.tmp
-.DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.code-workspace
-data/
-android/
-release/
+
+# Data directories (runtime data, not build-time)
+**/data/*.csv
+**/data/*.db
+**/data/*.db-journal
+**/data/*.json
+**/data/cache/
+**/data/uploads/
+**/data/logs/
+
+# Plugin source directories (installed at runtime, not baked into image)
+node/
+plugins/
+
+# IDE and temp files
+.trae/
 *.md
-start.bat
-kill_stale_port.ps1
-backend/
-frontend/
+!web/frontend/README.md
+test_*
+*.bak
+*.tmp
+*.log

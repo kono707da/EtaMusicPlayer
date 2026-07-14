@@ -91,6 +91,17 @@ export async function updateOnlinePlugin(name) {
   return resp.data
 }
 
+// 手动导入插件 zip
+export async function importPlugin(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const resp = await client.post('/api/plugins/import', formData, {
+    timeout: 120000,
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+  return resp.data
+}
+
 // ===== 远程节点管理 =====
 
 // 列出所有远程节点配置

@@ -35,6 +35,20 @@ class OnlinePlugin:
         self.requirements: str = data.get("requirements", "")
         self.category: str = data.get("category", "other")
         self.icon: str = data.get("icon", "puzzle")
+        # schema v2 新增字段
+        self.type: str = data.get("type", "plugin")  # "plugin" | "library"
+        self.dependencies: list[dict] = data.get("dependencies", []) or []
+        self.sha256: str = data.get("sha256", "")
+
+    @property
+    def is_library(self) -> bool:
+        """是否为库类型（无 plugin.py，不注册路由，仅提供 import 支持）"""
+        return self.type == "library"
+
+    @property
+    def dependency_names(self) -> list[str]:
+        """依赖的插件名列表"""
+        return [d.get("name", "") for d in self.dependencies if d.get("name")]
 
     def to_dict(self) -> dict:
         return {
@@ -50,6 +64,9 @@ class OnlinePlugin:
             "requirements": self.requirements,
             "category": self.category,
             "icon": self.icon,
+            "type": self.type,
+            "dependencies": self.dependencies,
+            "sha256": self.sha256,
         }
 
     def is_compatible(self) -> tuple[bool, str]:
@@ -220,6 +237,9 @@ class OnlineRegistry:
                 "directory": op.directory,
                 "category": op.category,
                 "icon": op.icon,
+                "type": op.type,
+                "dependencies": op.dependencies,
+                "is_library": op.is_library,
                 "online_available": True,
                 "installed": installed,
                 "local_version": local_version,

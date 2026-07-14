@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File as FastAPIFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from eta_web.plugins_manager.schemas import (
     OnlinePluginInfo,
     OnlineRegistryStatus,
     PluginDeleteResponse,
+    PluginImportResponse,
     PluginInstallResponse,
     PluginOut,
     PluginRegistrySyncResponse,
@@ -32,7 +33,7 @@ from eta_web.plugins_manager.manager import (
     sync_plugin_registry,
 )
 from eta_web.plugins_manager.online import registry as online_registry
-from eta_web.plugins_manager.installer import install_plugin, update_plugin
+from eta_web.plugins_manager.installer import install_plugin, update_plugin, import_plugin_from_zip
 from eta_web import __version__ as ETA_WEB_VERSION
 
 logger = logging.getLogger("eta_web.plugins")
@@ -67,6 +68,10 @@ def list_plugins(db: Session = Depends(get_db)) -> list[PluginOut]:
                 updated_at=r.updated_at,
                 loaded=r.name in _loaded_in_process,
                 files_present=r.name in discovered,
+                is_dependency=r.is_dependency,
+                dependent_by=r.dependent_by or "[]",
+                is_library=r.is_library,
+                dependencies=r.dependencies or "[]",
             )
         )
     return out
@@ -126,7 +131,10 @@ def delete_plugin(name: str, db: Session = Depends(get_db)) -> PluginDeleteRespo
     """删除插件（删除文件 + 数据库记录）
 
     危险操作：会删除插件整个目录。
+    如果此插件是其他插件的依赖，将拒绝删除。
     """
+    import json
+
     plugin = db.query(Plugin).filter(Plugin.name == name).one_or_none()
     if plugin is None:
         raise HTTPException(status_code=404, detail="插件不存在")
@@ -135,7 +143,46 @@ def delete_plugin(name: str, db: Session = Depends(get_db)) -> PluginDeleteRespo
             status_code=400,
             detail="插件正在运行，请先禁用并重启访问端后再删除",
         )
+
+    # 检查是否有其他插件依赖此插件
+    if plugin.dependent_by:
+        try:
+            dependents = json.loads(plugin.dependent_by or "[]")
+        except (json.JSONDecodeError, TypeError):
+            dependents = []
+        # 过滤掉已不存在的插件
+        active_dependents = []
+        for dep_name in dependents:
+            dep_plugin = db.query(Plugin).filter(Plugin.name == dep_name).one_or_none()
+            if dep_plugin and dep_plugin.enabled:
+                active_dependents.append(dep_name)
+        if active_dependents:
+            raise HTTPException(
+                status_code=400,
+                detail=f"此插件被 {', '.join(active_dependents)} 依赖，请先删除或禁用这些插件",
+            )
+
     files_deleted = delete_plugin_files(name)
+
+    # 如果此插件有依赖声明，从依赖插件的 dependent_by 中移除
+    try:
+        deps = json.loads(plugin.dependencies or "[]")
+        for dep in deps:
+            dep_name = dep.get("name", "")
+            if dep_name:
+                dep_plugin = db.query(Plugin).filter(Plugin.name == dep_name).one_or_none()
+                if dep_plugin:
+                    try:
+                        dep_list = json.loads(dep_plugin.dependent_by or "[]")
+                    except (json.JSONDecodeError, TypeError):
+                        dep_list = []
+                    if name in dep_list:
+                        dep_list.remove(name)
+                        dep_plugin.dependent_by = json.dumps(dep_list, ensure_ascii=False)
+                        dep_plugin.is_dependency = len(dep_list) > 0
+    except (json.JSONDecodeError, TypeError):
+        pass
+
     db.delete(plugin)
     db.commit()
     return PluginDeleteResponse(
@@ -323,6 +370,46 @@ def local_node_status(db: Session = Depends(get_db)) -> dict:
         local_db.close()
 
     return result
+
+
+# ===== 手动导入插件 =====
+
+
+@router.post("/import", response_model=PluginImportResponse)
+async def import_plugin(file: UploadFile = FastAPIFile(...)) -> PluginImportResponse:
+    """手动导入插件 zip 包
+
+    接受 multipart/form-data 上传的 zip 文件，校验后安装。
+    校验内容：
+    - zip 路径穿越防护
+    - 插件结构验证（含 __init__.py 和 plugin.py）
+    - SHA256 校验（如果在线注册表声明了 sha256）
+    - 依赖检查（自动安装缺失依赖）
+    """
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="请上传 .zip 格式的插件包")
+
+    try:
+        zip_data = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"读取文件失败: {e}")
+
+    if not zip_data:
+        raise HTTPException(status_code=400, detail="文件为空")
+
+    # 限制文件大小（100MB）
+    max_size = 100 * 1024 * 1024
+    if len(zip_data) > max_size:
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件过大（{len(zip_data) // 1024 // 1024}MB），最大允许 100MB",
+        )
+
+    result = import_plugin_from_zip(zip_data)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "导入失败"))
+
+    return PluginImportResponse(**result)
 
 
 # ===== 在线插件注册表 =====

@@ -12,7 +12,8 @@ import {
   getOnlineRegistryStatus,
   refreshOnlineRegistry,
   installOnlinePlugin,
-  updateOnlinePlugin
+  updateOnlinePlugin,
+  importPlugin
 } from '../api/plugin'
 import axios from 'axios'
 import { Button } from '@/components/ui/button'
@@ -32,7 +33,8 @@ import { useConfirm } from '@/composables/use-confirm'
 import {
   RefreshCw, Trash2, Package, Loader2, Save, XCircle,
   Download, Cloud, CloudOff, ArrowUpCircle, CheckCircle2,
-  XCircle as XCircleIcon, AlertTriangle, Wifi, WifiOff
+  XCircle as XCircleIcon, AlertTriangle, Wifi, WifiOff,
+  Upload, FileArchive, Link2
 } from 'lucide-vue-next'
 
 const toast = useToast()
@@ -54,6 +56,11 @@ const installing = ref(null)
 const updating = ref(null)
 
 const activeTab = ref('installed')
+
+// 手动导入相关
+const importing = ref(false)
+const dragOver = ref(false)
+const fileInput = ref(null)
 
 async function load() {
   loading.value = true
@@ -132,6 +139,45 @@ async function onUpdate(plugin) {
     toast.error('更新失败', e.response?.data?.detail || e.message, e)
   } finally {
     updating.value = null
+  }
+}
+
+async function onImport(file) {
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    toast.error('文件格式错误', '请上传 .zip 格式的插件包')
+    return
+  }
+  importing.value = true
+  try {
+    const result = await importPlugin(file)
+    toast.success(result.message, result.details || '')
+    await load()
+    await loadOnline()
+  } catch (e) {
+    const detail = e.response?.data?.detail || e.message
+    toast.error('导入失败', detail, e)
+  } finally {
+    importing.value = false
+  }
+}
+
+function onDrop(e) {
+  dragOver.value = false
+  const files = e.dataTransfer?.files
+  if (files && files.length > 0) {
+    onImport(files[0])
+  }
+}
+
+function onFileSelect(e) {
+  const files = e.target?.files
+  if (files && files.length > 0) {
+    onImport(files[0])
+  }
+  // 重置 input 以允许重复选择同一文件
+  if (fileInput.value) {
+    fileInput.value.value = ''
   }
 }
 
@@ -276,6 +322,9 @@ function stateBadge(plugin) {
   if (!plugin.files_present) {
     return { label: '文件缺失', variant: 'destructive' }
   }
+  if (plugin.is_library) {
+    return { label: '可用', variant: 'success' }
+  }
   if (plugin.loaded) {
     return { label: '运行中', variant: 'success' }
   }
@@ -292,8 +341,24 @@ function compatIcon(compatible) {
 }
 
 function categoryLabel(cat) {
-  const map = { core: '核心', download: '下载', other: '其他', unknown: '未知' }
+  const map = { core: '核心', download: '下载', library: '库', other: '其他', unknown: '未知' }
   return map[cat] || cat
+}
+
+function parseDependentBy(plugin) {
+  try {
+    return JSON.parse(plugin.dependent_by || '[]')
+  } catch {
+    return []
+  }
+}
+
+function parseDependencies(plugin) {
+  try {
+    return JSON.parse(plugin.dependencies || '[]')
+  } catch {
+    return []
+  }
 }
 
 onMounted(() => {
@@ -338,6 +403,16 @@ onMounted(() => {
         <Cloud v-if="onlineAvailable" class="inline h-4 w-4 mr-1" />
         <CloudOff v-else class="inline h-4 w-4 mr-1" />
         在线插件 ({{ onlinePlugins.length }})
+      </button>
+      <button
+        class="px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px"
+        :class="activeTab === 'import'
+          ? 'border-primary text-primary'
+          : 'border-transparent text-muted-foreground hover:text-foreground'"
+        @click="activeTab = 'import'"
+      >
+        <Upload class="inline h-4 w-4 mr-1" />
+        导入
       </button>
     </div>
 
@@ -410,7 +485,17 @@ onMounted(() => {
                 </Badge>
               </TableCell>
               <TableCell class="font-mono font-medium text-foreground">
-                {{ p.name }}
+                <div class="flex items-center gap-2">
+                  {{ p.name }}
+                  <Badge v-if="p.is_library" variant="secondary" class="text-xs">库</Badge>
+                  <Badge v-if="p.is_dependency" variant="outline" class="text-xs">依赖</Badge>
+                </div>
+                <div v-if="parseDependentBy(p).length > 0" class="text-xs text-muted-foreground mt-1">
+                  被 {{ parseDependentBy(p).join('、') }} 依赖
+                </div>
+                <div v-if="parseDependencies(p).length > 0" class="text-xs text-muted-foreground mt-1">
+                  依赖 {{ parseDependencies(p).map(d => d.name).join('、') }}
+                </div>
               </TableCell>
               <TableCell class="text-muted-foreground">{{ p.version }}</TableCell>
               <TableCell class="text-muted-foreground">{{ p.description }}</TableCell>
@@ -500,6 +585,12 @@ onMounted(() => {
               <TableCell>
                 <div class="font-medium text-foreground">{{ p.display_name || p.name }}</div>
                 <div class="text-xs text-muted-foreground font-mono">{{ p.name }}</div>
+                <div v-if="p.is_library" class="mt-1">
+                  <Badge variant="secondary" class="text-xs">库类型</Badge>
+                </div>
+                <div v-if="p.dependencies && p.dependencies.length > 0" class="text-xs text-muted-foreground mt-1">
+                  依赖 {{ p.dependencies.map(d => d.name).join('、') }}
+                </div>
               </TableCell>
               <TableCell>
                 <Badge variant="secondary">{{ categoryLabel(p.category) }}</Badge>
@@ -566,6 +657,68 @@ onMounted(() => {
             </TableRow>
           </TableBody>
         </Table>
+      </div>
+    </template>
+
+    <!-- ===== 手动导入 Tab ===== -->
+    <template v-if="activeTab === 'import'">
+      <Alert class="border-primary/30 bg-primary/5">
+        <AlertDescription class="text-muted-foreground">
+          手动导入插件 zip 包。系统会自动校验包结构、SHA256（如在线注册表声明）和依赖关系。
+          导入后需要重启服务才能生效。
+        </AlertDescription>
+      </Alert>
+
+      <!-- 拖拽区域 -->
+      <div
+        class="rounded-lg border-2 border-dashed p-8 text-center transition-colors"
+        :class="dragOver
+          ? 'border-primary bg-primary/10'
+          : 'border-border hover:border-primary/50'"
+        @dragover.prevent="dragOver = true"
+        @dragleave.prevent="dragOver = false"
+        @drop.prevent="onDrop"
+      >
+        <input
+          ref="fileInput"
+          type="file"
+          accept=".zip"
+          class="hidden"
+          @change="onFileSelect"
+        />
+        <div v-if="importing" class="flex flex-col items-center gap-3">
+          <Loader2 class="h-10 w-10 animate-spin text-primary" />
+          <div class="text-sm text-muted-foreground">正在导入插件...</div>
+        </div>
+        <div v-else class="flex flex-col items-center gap-3">
+          <FileArchive class="h-12 w-12 text-muted-foreground" />
+          <div class="text-base font-medium text-foreground">
+            拖拽插件 zip 包到此处
+          </div>
+          <div class="text-sm text-muted-foreground">或</div>
+          <Button variant="secondary" @click="fileInput?.click()">
+            <Upload class="h-4 w-4" />
+            选择文件
+          </Button>
+          <div class="text-xs text-muted-foreground mt-2">
+            支持 .zip 格式，最大 100MB
+          </div>
+        </div>
+      </div>
+
+      <!-- 导入说明 -->
+      <div class="rounded-lg border bg-card p-4 space-y-2">
+        <div class="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Link2 class="h-4 w-4" />
+          导入须知
+        </div>
+        <ul class="text-sm text-muted-foreground space-y-1 pl-6 list-disc">
+          <li>zip 包应包含插件目录结构（如 <code class="text-xs">asmr_one/eta_asmr/plugin.py</code>）</li>
+          <li>系统会自动检测插件名和包名</li>
+          <li>如在线注册表声明了 SHA256，将自动校验完整性</li>
+          <li>含依赖的插件会自动安装缺失的依赖（需联网）</li>
+          <li>已知插件会覆盖更新，导入前会自动备份</li>
+        </ul>
       </div>
     </template>
 
