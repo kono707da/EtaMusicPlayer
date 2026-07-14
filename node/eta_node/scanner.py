@@ -186,7 +186,6 @@ def scan_directory(watch_dir: WatchDir, db: Session) -> tuple[int, int, int]:
     updated_tracks = 0
 
     system_playlist = _get_or_create_system_playlist(db)
-    inbox_playlist = _get_or_create_inbox_playlist(db)
 
     root = watch_dir.path
     root_path = Path(root)
@@ -257,8 +256,6 @@ def scan_directory(watch_dir: WatchDir, db: Session) -> tuple[int, int, int]:
             db.flush()
             # 加入系统播放列表
             _add_to_system_playlist(db, system_playlist, track)
-            if inbox_playlist is not None:
-                _add_to_system_playlist(db, inbox_playlist, track)
             new_tracks += 1
         else:
             existing.abs_path = abs_path

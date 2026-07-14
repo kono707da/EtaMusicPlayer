@@ -78,7 +78,6 @@ const treeData = computed(() => {
   // 客户端分组
   const clientPlaylists = libraryStore.clientPlaylists || []
   const clientAll = clientPlaylists.find((p) => p.is_system && p.name === '全部音乐')
-  const clientInbox = clientPlaylists.find((p) => p.is_system && p.name === '收集箱')
   const clientCustom = clientPlaylists.filter((p) => !p.is_system)
   groups.push({
     id: 'client-group',
@@ -94,16 +93,6 @@ const treeData = computed(() => {
         isSystem: true,
         playlistId: clientAll?.id
       },
-      ...(clientInbox
-        ? [{
-            id: 'client-inbox',
-            label: '收集箱',
-            type: 'client-inbox',
-            playlistId: clientInbox.id,
-            isLeaf: true,
-            isSystem: true
-          }]
-        : []),
       ...clientCustom.map((p) => ({
         id: `client-pl-${p.id}`,
         label: p.name,
@@ -145,7 +134,7 @@ function toggleExpand(id) {
 
 function childIcon(type) {
   if (type === 'node-all' || type === 'client-all') return Library
-  if (type === 'node-inbox' || type === 'client-inbox') return Inbox
+  if (type === 'node-inbox') return Inbox
   return ListMusic
 }
 
@@ -169,7 +158,7 @@ function onNodeClick(data) {
     libraryStore.loadNodePlaylistTracks(data.nodeId, data.playlistId)
   } else if (data.type === 'client-all') {
     libraryStore.loadAllTracks()
-  } else if (data.type === 'client-inbox' || data.type === 'client-playlist') {
+  } else if (data.type === 'client-playlist') {
     libraryStore.loadClientPlaylistTracks(data.playlistId)
   }
 
