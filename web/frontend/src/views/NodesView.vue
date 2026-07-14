@@ -2,6 +2,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useNodesStore } from '../stores/nodes'
+import { useAuthStore } from '../stores/auth'
 import { usePluginsStore } from '../stores/plugins'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -40,6 +41,7 @@ import { FEATURE_REGISTRY } from '../config/version'
 const route = useRoute()
 const router = useRouter()
 const nodesStore = useNodesStore()
+const authStore = useAuthStore()
 const pluginsStore = usePluginsStore()
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -310,6 +312,16 @@ function goManage(row) {
   router.push({ path: '/admin/scan', query: { nodeId } })
 }
 
+// 跳转到本地节点的管理页面
+function goManageLocal() {
+  const localNode = nodesStore.nodes.find((n) => n.baseUrl === '/local_node')
+  if (localNode) {
+    router.push({ path: '/admin/scan', query: { nodeId: localNode.id } })
+  } else {
+    router.push('/admin/scan')
+  }
+}
+
 // 删除 = 退出登录 + 删除配置
 async function confirmDeleteRemoteNode(row) {
   const ok = await confirm(`确定删除远程节点「${row.name}」？将同时退出登录并删除配置。`, {
@@ -400,6 +412,15 @@ onMounted(() => {
 
         <div class="flex items-center gap-2">
           <span class="text-xs text-muted-foreground">插件启用即保持连接</span>
+          <Button
+            v-if="authStore.isAdmin"
+            variant="ghost"
+            size="sm"
+            @click="goManageLocal"
+          >
+            <Settings class="h-4 w-4" />
+            管理
+          </Button>
         </div>
       </div>
     </div>
