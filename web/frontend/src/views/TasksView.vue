@@ -9,7 +9,7 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell
 } from '@/components/ui/table'
 import { Pagination } from '@/components/ui/pagination'
-import { RefreshCw, Loader2, X, Clock, Activity } from 'lucide-vue-next'
+import { RefreshCw, Loader2, X, Clock, Activity, ChevronDown, CircleAlert } from 'lucide-vue-next'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useTargetNode } from '../composables/use-target-node'
 import { listTasks, cancelTask } from '../api/node'
@@ -25,6 +25,7 @@ const total = ref(0)
 const size = ref(20)
 const filterStatus = ref('')
 const filterType = ref('')
+const expandedTaskId = ref(null)
 let timer = null
 
 const statusColors = {
@@ -60,6 +61,7 @@ const taskTypeLabels = {
   permission_grant: '授权',
   permission_revoke: '撤销授权',
   dedup_update: '去重更新',
+  import_m3u: 'm3u 导入',
 }
 
 const totalPages = computed(() => Math.ceil(total.value / size.value) || 1)
@@ -98,6 +100,11 @@ function formatTime(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   return d.toLocaleString('zh-CN', { hour12: false })
+}
+
+function toggleExpand(task) {
+  if (task.status !== 'failed' && task.status !== 'cancelled') return
+  expandedTaskId.value = expandedTaskId.value === task.id ? null : task.id
 }
 
 function onPageChange(p) {
@@ -167,37 +174,63 @@ onBeforeUnmount(() => {
           </TableRow>
         </TableHeader>
         <TableBody>
-          <TableRow v-for="task in tasks" :key="task.id">
-            <TableCell class="font-mono text-xs">{{ task.id }}</TableCell>
-            <TableCell>
-              <div class="flex items-center gap-2">
-                <Activity class="h-3.5 w-3.5 text-muted-foreground" />
-                <span>{{ taskTypeLabels[task.task_type] || task.task_type }}</span>
-              </div>
-            </TableCell>
-            <TableCell>
-              <Badge :class="statusColors[task.status] || ''" variant="outline">
-                {{ statusLabels[task.status] || task.status }}
-              </Badge>
-            </TableCell>
-            <TableCell>
-              <div v-if="task.status === 'running'" class="flex items-center gap-2">
-                <div class="h-1.5 w-16 rounded-full bg-secondary overflow-hidden">
-                  <div class="h-full bg-primary rounded-full transition-all" :style="{ width: `${task.progress}%` }" />
+          <template v-for="task in tasks" :key="task.id">
+            <TableRow
+              :class="{
+                'cursor-pointer hover:bg-muted/50': task.status === 'failed' || task.status === 'cancelled'
+              }"
+              @click="toggleExpand(task)"
+            >
+              <TableCell class="font-mono text-xs">{{ task.id }}</TableCell>
+              <TableCell>
+                <div class="flex items-center gap-2">
+                  <Activity class="h-3.5 w-3.5 text-muted-foreground" />
+                  <span>{{ taskTypeLabels[task.task_type] || task.task_type }}</span>
                 </div>
-                <span class="text-xs text-muted-foreground">{{ task.progress }}%</span>
-              </div>
-              <span v-else class="text-xs text-muted-foreground">—</span>
-            </TableCell>
-            <TableCell class="text-sm">{{ task.submitted_by || '—' }}</TableCell>
-            <TableCell class="text-xs text-muted-foreground">{{ formatTime(task.submitted_at) }}</TableCell>
-            <TableCell class="text-xs text-muted-foreground">{{ formatTime(task.finished_at) }}</TableCell>
-            <TableCell>
-              <Button v-if="task.status === 'pending'" variant="ghost" size="sm" @click="onCancel(task)">
-                <X class="h-3.5 w-3.5 text-red-400" />
-              </Button>
-            </TableCell>
-          </TableRow>
+              </TableCell>
+              <TableCell>
+                <div class="flex items-center gap-1.5">
+                  <Badge :class="statusColors[task.status] || ''" variant="outline">
+                    {{ statusLabels[task.status] || task.status }}
+                  </Badge>
+                  <ChevronDown
+                    v-if="(task.status === 'failed' || task.status === 'cancelled') && task.error_message"
+                    class="h-3.5 w-3.5 text-muted-foreground transition-transform"
+                    :class="{ 'rotate-180': expandedTaskId === task.id }"
+                  />
+                </div>
+              </TableCell>
+              <TableCell>
+                <div v-if="task.status === 'running'" class="flex items-center gap-2">
+                  <div class="h-1.5 w-16 rounded-full bg-secondary overflow-hidden">
+                    <div class="h-full bg-primary rounded-full transition-all" :style="{ width: `${task.progress}%` }" />
+                  </div>
+                  <span class="text-xs text-muted-foreground">{{ task.progress }}%</span>
+                </div>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </TableCell>
+              <TableCell class="text-sm">{{ task.submitted_by || '—' }}</TableCell>
+              <TableCell class="text-xs text-muted-foreground">{{ formatTime(task.submitted_at) }}</TableCell>
+              <TableCell class="text-xs text-muted-foreground">{{ formatTime(task.finished_at) }}</TableCell>
+              <TableCell>
+                <Button v-if="task.status === 'pending'" variant="ghost" size="sm" @click.stop="onCancel(task)">
+                  <X class="h-3.5 w-3.5 text-red-400" />
+                </Button>
+              </TableCell>
+            </TableRow>
+            <!-- 展开行：错误详情 -->
+            <TableRow v-if="expandedTaskId === task.id && task.error_message">
+              <TableCell :colspan="8" class="bg-destructive/5 py-3 px-4">
+                <div class="flex items-start gap-2">
+                  <CircleAlert class="h-4 w-4 mt-0.5 shrink-0 text-destructive" />
+                  <div class="flex-1 min-w-0">
+                    <p class="text-xs font-medium text-destructive mb-1">失败原因</p>
+                    <pre class="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono">{{ task.error_message }}</pre>
+                  </div>
+                </div>
+              </TableCell>
+            </TableRow>
+          </template>
           <TableRow v-if="tasks.length === 0">
             <TableCell :colspan="8" class="py-12 text-center text-sm text-muted-foreground">
               {{ loading ? '加载中...' : '暂无任务' }}
