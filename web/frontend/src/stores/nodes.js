@@ -176,20 +176,16 @@ export const useNodesStore = defineStore('nodes', () => {
     const node = nodes.value.find((n) => n.id === id)
     if (!node) throw new Error('节点不存在')
 
+    // 获取版本信息：网络不可达时抛出异常，交由调用方区分处理
+    // （过去这里把网络错误也当作"版本不兼容"返回，导致离线节点被错误标记为 incompatible）
     let versionInfo
     try {
       versionInfo = await apiGetNodeVersion(node)
     } catch (e) {
-      // 无法获取版本信息：可能是 node 版本过低（没有 /api/version），视为不兼容
-      const compat = {
-        result: COMPAT_RESULT.INCOMPATIBLE,
-        reason: '无法获取版本信息，node 版本过低或不可达',
-        versionInfo: null,
-        missingFeatures: [],
-        unsupportedFeatures: []
-      }
-      updateNode(id, { versionInfo: null, compatibility: compat })
-      return compat
+      // 清空旧的校验结果，避免显示过期信息
+      updateNode(id, { versionInfo: null, compatibility: null })
+      // 重新抛出，让 checkOneHealth 走登录验证分支判定 offline
+      throw e
     }
 
     const compat = checkCompatibility(versionInfo, {
