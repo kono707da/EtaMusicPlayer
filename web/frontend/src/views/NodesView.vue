@@ -86,13 +86,15 @@ async function loadRemoteNodes() {
 }
 
 // 健康检测 + 版本校验 + 登录
-// 流程：先版本校验 → 不兼容则拒绝连接；兼容则登录获取 token
-// 成功 => online + 已登录；认证失败 => auth_failed；版本不兼容 => incompatible；连接失败 => offline
+// 流程：先版本校验 → 拿到版本信息但不兼容才标记 incompatible；
+//       网络不可达（拿不到版本信息）继续走登录验证 → 由登录结果判定 offline / auth_failed
+// 成功 => online + 已登录；认证失败 => auth_failed；版本不兼容 => incompatible；网络不可达 => offline
 async function checkOneHealth(row, { silent = false } = {}) {
   nodeHealth[row.id] = { status: 'checking', message: '', checking: true }
   const nodeId = `remote-${row.id}`
 
-  // Step 1: 版本校验（在登录前执行，避免与不兼容的 node 交互）
+  // Step 1: 版本校验（仅当真正拿到版本信息且不兼容时才拦截）
+  // 网络错误（节点未启动）会抛出异常，进入 catch 后继续 Step 2 登录验证
   try {
     const compat = await nodesStore.checkNodeVersion(nodeId)
     if (compat.result === 'incompatible') {
@@ -105,7 +107,8 @@ async function checkOneHealth(row, { silent = false } = {}) {
       return
     }
   } catch (e) {
-    // 版本校验失败（网络不可达等），继续尝试登录以获取更准确的错误信息
+    // 版本校验网络失败（节点未启动或 /api/version 不可达）
+    // 继续走 Step 2 登录验证，由登录结果决定最终状态
   }
 
   // Step 2: 登录验证
@@ -118,16 +121,29 @@ async function checkOneHealth(row, { silent = false } = {}) {
     if (!silent) toast.success(`已连接：${row.name}`)
   } catch (e) {
     const status = e.response?.status
-    const msg = e.response?.data?.detail || e.message
-    // 401/403 => 认证失败（节点在线但凭证错）；其他 => 离线
     const isAuth = status === 401 || status === 403
+    // 离线时给出具体原因（<=15字）：节点未启动 / 网络不通 / 连接超时
+    const offlineMsg = formatOfflineReason(e)
     nodeHealth[row.id] = {
       status: isAuth ? 'auth_failed' : 'offline',
-      message: msg,
+      message: isAuth ? (e.response?.data?.detail || '用户名或密码错误') : offlineMsg,
       checking: false
     }
-    if (!silent) toast.error(isAuth ? '认证失败' : '连接失败', msg, e)
+    if (!silent) {
+      toast.error(isAuth ? '认证失败：凭证错误' : '节点离线：' + offlineMsg, nodeHealth[row.id].message, e)
+    }
   }
+}
+
+// 根据错误对象归纳离线原因（<=15字，区分错误类型便于排查）
+function formatOfflineReason(e) {
+  const code = e?.code || ''
+  const msg = String(e?.message || '')
+  if (code === 'ECONNABORTED' || msg.includes('timeout')) return '节点连接超时未响应'
+  if (code === 'ERR_NETWORK' || msg.includes('Network Error')) return '节点未启动或网络不通'
+  if (e?.response?.status === 404) return '节点接口不存在，需升级'
+  if (e?.response?.status === 502 || e?.response?.status === 503) return '节点服务暂不可用'
+  return '节点未启动或网络不通'
 }
 
 // 进入页面自动并行检测所有节点
@@ -225,7 +241,7 @@ async function saveRemoteNode() {
     // 登录验证：必须成功才保留节点
     const nodeId = editingRemoteNodeId.value || createdNodeId
     try {
-      // 先做版本校验
+      // 先做版本校验（仅拦截真正不兼容；网络错误继续尝试登录）
       const storeNodeId = `remote-${nodeId}`
       // 确保 store 中已有该节点（版本校验需要 baseUrl）
       const existing = nodesStore.nodes.find((n) => n.id === storeNodeId)
@@ -240,16 +256,22 @@ async function saveRemoteNode() {
           userInfo: null
         })
       }
-      const compat = await nodesStore.checkNodeVersion(storeNodeId)
-      if (compat.result === 'incompatible') {
-        // 版本不兼容：删除新建的节点配置，不保留
-        if (isNew && createdNodeId) {
-          try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
+      let compat = null
+      try {
+        compat = await nodesStore.checkNodeVersion(storeNodeId)
+        if (compat.result === 'incompatible') {
+          // 版本不兼容：删除新建的节点配置，不保留
+          if (isNew && createdNodeId) {
+            try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
+          }
+          nodesStore.removeNode(storeNodeId)
+          remoteNodeSaveError.value = compat.reason
+          toast.error('版本不兼容', compat.reason)
+          return
         }
-        nodesStore.removeNode(storeNodeId)
-        remoteNodeSaveError.value = compat.reason
-        toast.error('版本不兼容', compat.reason)
-        return
+      } catch (versionErr) {
+        // 版本校验网络失败（节点未启动等），继续尝试登录以判定最终状态
+        compat = null
       }
 
       const loginResult = await loginRemoteNode(nodeId)
@@ -264,7 +286,7 @@ async function saveRemoteNode() {
       nodeHealth[nodeId] = { status: 'online', message: '连接正常', checking: false }
       nodesStore.authVersion++
       // 部分兼容时提示
-      if (compat.result === 'partial') {
+      if (compat && compat.result === 'partial') {
         const labels = compat.missingFeatures
           .map((f) => FEATURE_REGISTRY[f]?.label || f)
           .join('、')
@@ -283,13 +305,13 @@ async function saveRemoteNode() {
         try { await deleteRemoteNode(createdNodeId) } catch { /* 忽略回滚错误 */ }
       }
       const status = loginErr.response?.status
-      const msg = loginErr.response?.data?.detail || loginErr.message
       const isAuth = status === 401 || status === 403
-      // 内联错误提示：直接在对话框内显示原因
-      remoteNodeSaveError.value = isAuth ? '认证失败：用户名或密码错' : '连接失败：节点不可达'
+      // 内联错误提示：直接在对话框内显示具体原因（<=15字）
+      const detail = isAuth ? '认证失败：用户名或密码错' : '节点离线：' + formatOfflineReason(loginErr)
+      remoteNodeSaveError.value = detail
       toast.error(
         isNew ? '添加失败：登录验证未通过' : '更新失败：登录验证未通过',
-        isAuth ? `认证失败：${msg}` : `连接失败：${msg}`,
+        detail,
         loginErr
       )
     }
