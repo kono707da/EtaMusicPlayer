@@ -23,12 +23,14 @@ const toast = useToast()
 const { confirm } = useConfirm()
 
 // 树节点数据：节点分组 + 客户端分组
+// 包含离线节点（置灰展示，点击仍可读缓存）
 const treeData = computed(() => {
-  const loggedNodes = nodesStore.loggedInNodes
+  const allNodes = nodesStore.nodes
   const groups = []
 
-  // 每个已登录节点一个分组
-  loggedNodes.forEach((n) => {
+  // 每个节点一个分组（在线可创建，离线只读展示）
+  allNodes.forEach((n) => {
+    const isOffline = !n.token
     const nodePlaylists = libraryStore.nodePlaylists[n.id] || []
     const inbox = nodePlaylists.find((p) => p.is_system && p.name === '收集箱')
     const custom = nodePlaylists.filter((p) => !p.is_system)
@@ -38,7 +40,8 @@ const treeData = computed(() => {
       label: n.name,
       nodeId: n.id,
       nodeName: n.name,
-      canCreate: true,
+      canCreate: !isOffline,
+      isOffline,
       children: [
         {
           id: `node-${n.id}-all`,
@@ -47,7 +50,8 @@ const treeData = computed(() => {
           nodeId: n.id,
           nodeName: n.name,
           isLeaf: true,
-          isSystem: true
+          isSystem: true,
+          isOffline
         },
         ...(inbox
           ? [{
@@ -58,7 +62,8 @@ const treeData = computed(() => {
               nodeName: n.name,
               playlistId: inbox.id,
               isLeaf: true,
-              isSystem: true
+              isSystem: true,
+              isOffline
             }]
           : []),
         ...custom.map((p) => ({
@@ -69,7 +74,8 @@ const treeData = computed(() => {
           nodeName: n.name,
           playlistId: p.id,
           isLeaf: true,
-          isSystem: false
+          isSystem: false,
+          isOffline
         }))
       ]
     })
@@ -182,6 +188,11 @@ async function onPlaylistCreated() {
 // ==================== 双击重命名 ====================
 function startRename(item, event) {
   if (item.isSystem) return
+  // 离线节点的播放列表来自缓存，不可重命名
+  if (item.isOffline) {
+    toast.warning('节点离线无法重命名', '该播放列表来源节点当前不可用')
+    return
+  }
   event.stopPropagation()
   renaming.value = {
     id: item.id,
@@ -249,6 +260,11 @@ function onContextmenu(item, event) {
   event.preventDefault()
   event.stopPropagation()
   if (item.isSystem) return
+  // 离线节点的播放列表来自缓存，不可删除（节点不可达，无法同步删除操作）
+  if (item.isOffline) {
+    toast.warning('节点离线无法删除', '该播放列表来源节点当前不可用')
+    return
+  }
   closeContextMenu()
   contextMenu.value = {
     visible: true,
@@ -334,12 +350,12 @@ onMounted(() => {
       </Button>
     </div>
 
-    <!-- 无任何已登录节点：引导 -->
+    <!-- 无任何节点（在线或离线都没有）：引导 -->
     <div
-      v-if="nodesStore.loggedInNodes.length === 0"
+      v-if="nodesStore.nodes.length === 0"
       class="flex flex-1 flex-col items-center justify-center gap-4 px-4 py-8"
     >
-      <Empty :icon="Unplug" description="尚未登录任何节点" />
+      <Empty :icon="Unplug" description="尚未添加任何节点" />
       <Button variant="default" size="sm" @click="goNodes">
         去添加 / 登录节点
       </Button>
@@ -351,7 +367,11 @@ onMounted(() => {
         <!-- 一级：分组标题（节点名 / 本机） + + 号 -->
         <div
           class="group flex items-center gap-1 rounded-md px-1.5 py-1.5 text-sm cursor-pointer transition-colors hover:bg-accent/50"
-          :class="isExpanded(group.id) ? 'bg-accent/30' : ''"
+          :class="[
+            isExpanded(group.id) ? 'bg-accent/30' : '',
+            group.isOffline ? 'opacity-60' : ''
+          ]"
+          :title="group.isOffline ? '节点离线·展示缓存数据' : ''"
           @click="onNodeClick(group)"
         >
           <button
@@ -365,7 +385,13 @@ onMounted(() => {
           </button>
           <component :is="groupIcon(group.type)" class="h-4 w-4 shrink-0 text-muted-foreground" />
           <span class="truncate flex-1 text-foreground font-medium">{{ group.label }}</span>
-          <!-- + 号：新建播放列表 -->
+          <!-- 离线标记 -->
+          <span
+            v-if="group.isOffline"
+            class="text-[10px] text-amber-500 shrink-0"
+            title="节点离线"
+          >离线</span>
+          <!-- + 号：新建播放列表（离线节点不可创建） -->
           <button
             v-if="group.canCreate"
             class="flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-primary"
@@ -382,9 +408,12 @@ onMounted(() => {
             v-for="child in group.children"
             :key="child.id"
             class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm cursor-pointer transition-colors select-none"
-            :class="currentKey === child.id
-              ? 'bg-primary/10 text-primary'
-              : 'text-foreground hover:bg-accent/50'"
+            :class="[
+              currentKey === child.id
+                ? 'bg-primary/10 text-primary'
+                : 'text-foreground hover:bg-accent/50',
+              child.isOffline ? 'opacity-60' : ''
+            ]"
             @click="onNodeClick(child)"
             @dblclick="startRename(child, $event)"
             @contextmenu="onContextmenu(child, $event)"

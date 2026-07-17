@@ -127,6 +127,14 @@
   .nav-item:hover {
     @apply bg-accent text-foreground;
   }
+
+  /* 离线节点曲目行：置灰提醒用户资源不可访问 */
+  .track-row-offline {
+    @apply opacity-50;
+  }
+  .track-row-offline:hover {
+    @apply opacity-75;
+  }
   .nav-item:focus-visible {
     @apply ring-1 ring-ring;
   }

@@ -69,6 +69,7 @@ from mutagen.mp4 import MP4  # type: ignore
 from sqlalchemy.orm import Session
 
 from eta_node.models import Track, WatchDir
+from eta_node.versioning import bump_version, ENTITY_TRACKS
 
 
 logger = logging.getLogger("etamusic.local_node.metadata_editor")
@@ -732,6 +733,8 @@ def batch_update_field(
         except Exception as e:
             logger.warning("写入文件标签失败 %s 字段 %s: %s", t.abs_path, field, e)
         count += 1
+    if count > 0:
+        bump_version(db, ENTITY_TRACKS)
     db.commit()
     return count
 
@@ -779,6 +782,8 @@ def batch_update_multi_fields(
             except Exception as e:
                 skipped.append({"field": field, "reason": f"文件回写失败: {e}"})
         count += 1
+    if count > 0:
+        bump_version(db, ENTITY_TRACKS)
     db.commit()
     return {
         "updated": count,
@@ -852,6 +857,8 @@ def rename_execute(
             ext = new_abs.suffix.lower().lstrip(".")
             t.ext = ext
             success.append(t.id)
+        if success:
+            bump_version(db, ENTITY_TRACKS)
         db.commit()
     except Exception as e:
         db.rollback()

@@ -642,12 +642,19 @@ def update_remote_node(
 
 @router.delete("/remote-nodes/{node_id}", status_code=204)
 def delete_remote_node(node_id: int, db: Session = Depends(get_db)):
-    """删除远程节点配置"""
+    """删除远程节点配置
+
+    同时清理该节点的所有缓存数据（曲库缓存、播放列表缓存、同步状态）
+    以及客户端播放列表中引用该节点的条目。
+    """
     node = db.get(RemoteNode, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="远程节点不存在")
     db.delete(node)
     db.commit()
+    # 级联清理缓存数据（CASCADE 会处理 FK，但客户端播放列表引用需显式清理）
+    from eta_web.node_cache.sync_service import cleanup_node_cache
+    cleanup_node_cache(db, node_id)
 
 
 @router.post("/remote-nodes/{node_id}/test")

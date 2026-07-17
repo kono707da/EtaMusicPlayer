@@ -240,6 +240,10 @@ function onRowDblclick(row, idx) {
     toast.warning('缺少来源节点信息', '无法播放')
     return
   }
+  if (row.__nodeOffline) {
+    toast.warning('节点离线无法播放', '该曲目来源节点当前不可用')
+    return
+  }
   const startIndex = (idx != null && idx >= 0) ? idx : 0
   player.playTracks(props.tracks, startIndex)
 }
@@ -271,6 +275,11 @@ function closeContextMenu() {
 function addToQueue() {
   const row = contextMenu.value.row
   if (!row) return
+  if (row.__nodeOffline) {
+    toast.warning('节点离线无法播放', '该曲目来源节点当前不可用')
+    closeContextMenu()
+    return
+  }
   player.appendTracks([row])
   toast.success('已加入播放队列')
   closeContextMenu()
@@ -279,7 +288,16 @@ function addToQueue() {
 // 右键：加入到播放列表
 function addToPlaylist() {
   const tracks = selection.value.length > 0 ? selection.value : [contextMenu.value.row]
-  addToPlaylistTracks.value = tracks.filter(Boolean)
+  const valid = tracks.filter(Boolean).filter((t) => !t.__nodeOffline)
+  if (valid.length === 0) {
+    toast.warning('离线曲目无法加入播放列表', '请选择在线节点的曲目')
+    closeContextMenu()
+    return
+  }
+  if (valid.length < tracks.filter(Boolean).length) {
+    toast.warning(`已跳过 ${tracks.filter(Boolean).length - valid.length} 首离线曲目`)
+  }
+  addToPlaylistTracks.value = valid
   addToPlaylistVisible.value = true
   closeContextMenu()
 }
@@ -301,12 +319,15 @@ function playThis() {
 // 右键时已同步选中状态，这里直接用 selection
 const metadataPanelVisible = ref(false)
 const metadataPanelTracks = ref([])
+const metadataPanelReadonly = ref(false)
 function editMetadata() {
   if (selection.value.length === 0) {
     closeContextMenu()
     return
   }
   metadataPanelTracks.value = selection.value.slice()
+  // 含离线曲目时进入只读模式（仅查看元数据）
+  metadataPanelReadonly.value = selection.value.some((t) => t.__nodeOffline)
   metadataPanelVisible.value = true
   closeContextMenu()
 }
@@ -338,6 +359,11 @@ function startInlineEdit(row, colKey, event) {
     return
   }
   if (!INLINE_EDITABLE_FIELDS.has(colKey)) return
+  // 离线曲目元数据来自缓存，不可编辑
+  if (row.__nodeOffline) {
+    toast.warning('节点离线无法编辑', '该曲目来源节点当前不可用')
+    return
+  }
   // 阻止冒泡到 onRowDblclick（避免触发播放）
   if (event) {
     event.stopPropagation()
@@ -523,6 +549,8 @@ const nodeMap = computed(() => {
 })
 
 function getTrackCoverUrl(row) {
+  // 离线节点无法取封面（节点 API 不可达）
+  if (row.__nodeOffline) return ''
   // 不再仅依赖 cover_embedded：后端 /cover 端点会回退到同级目录 cover.jpg
   const nodeId = row.__nodeId
   if (nodeId == null) return ''
@@ -564,7 +592,10 @@ function onCoverError(e) {
             v-for="(row, idx) in tableData"
             :key="row.id ?? idx"
             class="cursor-pointer"
-            :class="isSelected(row) ? 'bg-primary/10' : ''"
+            :class="[
+              isSelected(row) ? 'bg-primary/10' : '',
+              row.__nodeOffline ? 'track-row-offline' : ''
+            ]"
             @click="onRowClick(row, idx, $event)"
             @dblclick="onRowDblclick(row, idx)"
             @contextmenu="onRowContextmenu(row, idx, $event)"
@@ -578,7 +609,10 @@ function onCoverError(e) {
             >
               <!-- 封面缩略图 -->
               <template v-if="col.key === 'cover'">
-                <div class="h-10 w-10 overflow-hidden rounded bg-muted/40 flex items-center justify-center">
+                <div
+                  class="h-10 w-10 overflow-hidden rounded bg-muted/40 flex items-center justify-center relative"
+                  :title="row.__nodeOffline ? '节点离线' : ''"
+                >
                   <img
                     v-if="getTrackCoverUrl(row)"
                     :src="getTrackCoverUrl(row)"
@@ -644,8 +678,13 @@ function onCoverError(e) {
             </TableCell>
             <!-- 来源节点单元格 -->
             <TableCell v-if="showSource">
-              <Badge variant="outline" class="font-normal text-muted-foreground">
-                {{ row.__nodeName }}
+              <Badge
+                :variant="row.__nodeOffline ? 'destructive' : 'outline'"
+                class="font-normal"
+                :class="row.__nodeOffline ? '' : 'text-muted-foreground'"
+                :title="row.__nodeOffline ? '节点离线' : ''"
+              >
+                {{ row.__nodeName }}{{ row.__nodeOffline ? ' ·离线' : '' }}
               </Badge>
             </TableCell>
           </TableRow>
@@ -776,6 +815,7 @@ function onCoverError(e) {
     <MetadataPanel
       v-model:visible="metadataPanelVisible"
       :tracks="metadataPanelTracks"
+      :readonly="metadataPanelReadonly"
       @updated="onMetadataUpdated"
     />
   </div>

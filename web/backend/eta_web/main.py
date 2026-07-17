@@ -26,6 +26,7 @@ from eta_web.plugins_manager.routers import router as plugins_router, set_loaded
 from eta_web.plugins_manager.database import init_db
 from eta_web.system_routes import router as system_router
 from eta_web.client_playlists.routers import router as client_playlists_router
+from eta_web.node_cache.routers import router as node_cache_router
 
 logger = logging.getLogger("eta_web")
 
@@ -100,6 +101,7 @@ app.add_middleware(
 app.include_router(plugins_router)
 app.include_router(system_router)
 app.include_router(client_playlists_router)
+app.include_router(node_cache_router)
 
 
 @app.get("/health", tags=["root"])

@@ -44,6 +44,7 @@ def init_db() -> None:
     """建表（仅当表不存在时创建）+ 轻量迁移（补齐新增列）"""
     from eta_web.plugins_manager import models  # noqa: F401
     from eta_web.client_playlists import models as _client_models  # noqa: F401
+    from eta_web.node_cache import models as _node_cache_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _auto_migrate()

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from eta_node.models import NodeTask, Playlist, PlaylistItem, Track, User, WatchDir
 from eta_node.scanner import scan_directory
 from eta_node.task_executor import write_audit_log
+from eta_node.versioning import bump_version, ENTITY_PLAYLISTS
 
 logger = logging.getLogger("eta_node.m3u_importer")
 
@@ -260,6 +261,7 @@ def handle_import_m3u(
     )
 
     task.progress = 100
+    bump_version(db, ENTITY_PLAYLISTS)
     return {
         "playlists": playlists_created,
         "total_files": total_files,

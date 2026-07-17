@@ -7,7 +7,7 @@
  */
 
 // 客户端软件版本号
-export const CLIENT_VERSION = '1.1.1'
+export const CLIENT_VERSION = '1.2.0'
 
 // 客户端支持的 API 协议主版本
 // 与 node 的 API_VERSION 不一致时，视为完全不兼容
@@ -15,7 +15,8 @@ export const CLIENT_API_VERSION = 1
 
 // 客户端要求的最低 node 版本
 // 低于此版本的 node 将被拒绝连接
-export const MIN_NODE_VERSION = '1.1.0'
+// 1.2.0 起：节点需支持 data_sync 功能（曲库/播放列表增量同步与离线缓存）
+export const MIN_NODE_VERSION = '1.2.0'
 
 /**
  * 客户端功能到 node feature 的映射
@@ -104,6 +105,10 @@ export const FEATURE_REGISTRY = {
   import_m3u: {
     label: 'm3u 导入',
     description: '从 m3u 文件批量导入播放列表'
+  },
+  data_sync: {
+    label: '离线缓存同步',
+    description: '曲库/播放列表版本号与增量同步，节点离线时访问端可读缓存'
   }
 }
 

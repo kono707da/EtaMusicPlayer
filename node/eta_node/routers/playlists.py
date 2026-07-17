@@ -1,6 +1,8 @@
 """播放列表路由：CRUD、添加/移除曲目、系统列表、重排序"""
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -23,6 +25,7 @@ from eta_node.schemas import (
     ReorderRequest,
     TrackOut,
 )
+from eta_node.versioning import bump_version, ENTITY_PLAYLISTS
 
 
 router = APIRouter(prefix="/api/playlists", tags=["playlists"])
@@ -106,6 +109,7 @@ def create_playlist(
         description=payload.description,
     )
     db.add(pl)
+    bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)
@@ -170,6 +174,7 @@ def update_playlist(
             pl.name = payload.name
         if payload.description is not None:
             pl.description = payload.description
+    bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)
@@ -189,7 +194,8 @@ def delete_playlist(
         raise HTTPException(status_code=400, detail="系统列表不可删除")
     if not _can_access_playlist(db, pl, user):
         raise HTTPException(status_code=403, detail="无权操作")
-    db.delete(pl)
+    pl.deleted_at = datetime.utcnow()
+    bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
 
 
@@ -237,6 +243,8 @@ def add_tracks(
         db.add(item)
         next_pos += 1
         added += 1
+    if added > 0:
+        bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)
@@ -260,6 +268,9 @@ def remove_tracks(
         PlaylistItem.playlist_id == playlist_id,
         PlaylistItem.track_id.in_(payload.track_ids),
     ).delete(synchronize_session=False)
+    # 播放列表内容变更，需手动 touch pl 对象使其进入 dirty 并被 bump_version 打戳
+    pl.updated_at = datetime.utcnow()
+    bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)
@@ -302,6 +313,9 @@ def reorder_tracks(
     # 重新编号
     for idx, it in enumerate(items):
         it.position = idx
+    # 播放列表内容变更，手动 touch pl 使其被 bump_version 打戳
+    pl.updated_at = datetime.utcnow()
+    bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)

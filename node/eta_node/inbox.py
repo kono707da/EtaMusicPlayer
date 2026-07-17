@@ -13,6 +13,7 @@ from eta_node.models import (
     User,
     SYSTEM_PLAYLIST_INBOX,
 )
+from eta_node.versioning import bump_version, ENTITY_PLAYLISTS
 
 logger = logging.getLogger("etamusic.plugins.local_node")
 
@@ -34,6 +35,7 @@ def _get_or_create_inbox(db: Session) -> Optional[Playlist]:
             description="系统自动维护：所有下载的音频",
         )
         db.add(pl)
+        bump_version(db, ENTITY_PLAYLISTS)
         db.commit()
         db.refresh(pl)
     return pl
@@ -76,6 +78,7 @@ def add_tracks_to_inbox(track_ids: list[int]) -> int:
             db.add(item)
             added += 1
         if added > 0:
+            bump_version(db, ENTITY_PLAYLISTS)
             db.commit()
         return added
     except Exception as e:

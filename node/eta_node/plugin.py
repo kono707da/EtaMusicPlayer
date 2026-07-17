@@ -24,6 +24,7 @@ from eta_node.dedup import DEFAULT_FIELDS, DEFAULT_DURATION_TOLERANCE
 from eta_node.routers import (
     audit,
     auth,
+    data_sync,
     dedup,
     inbox,
     metadata,
@@ -58,6 +59,10 @@ def bootstrap() -> None:
     init_db()
     db = SessionLocal()
     try:
+        # 0. 初始化数据版本号记录（首次升级到 1.2.0 时创建）
+        from eta_node.versioning import ensure_versions_initialized
+        ensure_versions_initialized(db)
+
         # 1. 创建默认 admin 用户
         admin = db.query(User).filter(User.username == "admin").one_or_none()
         if admin is None:
@@ -161,6 +166,7 @@ def create_local_node_app() -> FastAPI:
     sub_app.include_router(tasks.router)
     sub_app.include_router(audit.router)
     sub_app.include_router(stats.router)
+    sub_app.include_router(data_sync.router)
 
     @sub_app.get("/health", tags=["root"])
     def local_health() -> dict:

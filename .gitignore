@@ -22,6 +22,11 @@ pnpm-debug.log*
 
 # ===== 前端构建产物（开发时不入库，CI/启动时构建） =====
 web/frontend/dist/
+frontend/dist/
+
+# ===== Node 打包产物（PyInstaller 输出） =====
+node/build/
+node/dist/
 
 # ===== 数据库与数据文件（含用户数据，禁止入库） =====
 web/backend/data/*.db
