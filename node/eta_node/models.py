@@ -102,6 +102,12 @@ class Track(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False
     )
+    # 软删除标记：节点侧不实际 DELETE，设置 deleted_at 后增量同步接口通知访问端清理缓存
+    # 便于访问端离线时仍能展示该曲目元数据（置灰），直到用户手动删除节点注册
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    # 版本戳：记录该行最后一次变更时的 data_versions.version 值
+    # 增量查询 WHERE version_stamp > since_version，实现真正的增量同步
+    version_stamp: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
 
     watch_dir: Mapped["WatchDir"] = relationship(back_populates="tracks")
 
@@ -126,6 +132,10 @@ class Playlist(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False
     )
+    # 软删除标记：与 Track.deleted_at 同理，供访问端增量同步
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    # 版本戳：与 Track.version_stamp 同理
+    version_stamp: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
 
     owner: Mapped["User"] = relationship(
         back_populates="playlists", foreign_keys=[owner_id]
@@ -342,6 +352,24 @@ class UserPlayStats(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "track_id", name="uq_userplaystats_user_track"),
     )
+
+
+class DataVersion(Base):
+    """数据版本号表：记录曲库/播放列表的数据版本，供访问端增量同步比对
+
+    entity_type 取值：
+    - 'tracks':   曲库变更（扫描入库、元数据编辑、去重删除、音质替换）
+    - 'playlists': 播放列表变更（CRUD、增删曲目、m3u 导入、重排序）
+
+    每次数据变更在同一事务内 version += 1，访问端通过 /api/version 读取当前版本号，
+    与本地 node_sync_state.last_sync_version 比对决定是否拉取增量。
+    """
+    __tablename__ = "data_versions"
+
+    entity_type: Mapped[str] = mapped_column(
+        String(32), primary_key=True, comment="tracks | playlists"
+    )
+    version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 # 系统播放列表名称常量

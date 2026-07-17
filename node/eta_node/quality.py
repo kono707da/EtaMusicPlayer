@@ -6,6 +6,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from eta_node.models import PlaylistItem, Track
+from eta_node.versioning import bump_version, ENTITY_PLAYLISTS
 
 
 DURATION_TOLERANCE = 2.0  # 同曲判定时长容差（秒）
@@ -114,8 +115,10 @@ def replace_in_playlist(
     )
     if existing_new is not None:
         db.delete(item)
+        bump_version(db, ENTITY_PLAYLISTS)
         db.commit()
         return True
     item.track_id = new_track_id
+    bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
     return True

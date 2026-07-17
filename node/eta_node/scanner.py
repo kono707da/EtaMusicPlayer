@@ -24,6 +24,7 @@ from eta_node.models import (
     Track,
     WatchDir,
 )
+from eta_node.versioning import bump_version, ENTITY_TRACKS, ENTITY_PLAYLISTS
 
 
 # 支持扫描的音频扩展名（小写，含点）
@@ -281,6 +282,11 @@ def scan_directory(watch_dir: WatchDir, db: Session) -> tuple[int, int, int]:
             updated_tracks += 1
 
     watch_dir.last_scanned_at = datetime.utcnow()
+    # 数据变更在同一事务内递增版本号，供访问端增量同步
+    if new_tracks > 0 or updated_tracks > 0:
+        bump_version(db, ENTITY_TRACKS)
+    if new_tracks > 0:  # 新曲目被加入系统播放列表，播放列表内容也变更
+        bump_version(db, ENTITY_PLAYLISTS)
     db.commit()
     return total_files, new_tracks, updated_tracks
 
@@ -305,6 +311,7 @@ def _get_or_create_system_playlist(db: Session) -> Playlist:
             description="系统自动维护：所有已扫描曲目",
         )
         db.add(pl)
+        bump_version(db, ENTITY_PLAYLISTS)
         db.commit()
         db.refresh(pl)
     return pl
@@ -329,6 +336,7 @@ def _get_or_create_inbox_playlist(db: Session) -> Optional[Playlist]:
             description="系统自动维护：所有下载的音频",
         )
         db.add(pl)
+        bump_version(db, ENTITY_PLAYLISTS)
         db.commit()
         db.refresh(pl)
     return pl

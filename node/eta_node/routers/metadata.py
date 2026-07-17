@@ -34,6 +34,7 @@ from eta_node.tag_writer import (
     write_cover_to_file,
     write_lyrics_to_file,
 )
+from eta_node.versioning import bump_version, ENTITY_TRACKS
 
 
 logger = logging.getLogger("etamusic.local_node.metadata")
@@ -154,6 +155,8 @@ def batch_write_lyrics(
                 failed.append({"track_id": t.id, "title": t.title, "reason": "写入失败（可能是不支持的格式）"})
         except Exception as e:
             failed.append({"track_id": t.id, "title": t.title, "reason": str(e)})
+    if success > 0:
+        bump_version(db, ENTITY_TRACKS)
     db.commit()
     return {
         "updated": success,
@@ -211,6 +214,8 @@ async def batch_upload_cover(
                 failed.append({"track_id": t.id, "title": t.title, "reason": "写入失败"})
         except Exception as e:
             failed.append({"track_id": t.id, "title": t.title, "reason": str(e)})
+    if success > 0:
+        bump_version(db, ENTITY_TRACKS)
     db.commit()
     return {"updated": success, "failed": failed, "mime": mime, "size": len(content)}
 
@@ -268,6 +273,8 @@ def batch_remove_cover(
                     mf.close()
                 except Exception:
                     pass
+    if success > 0:
+        bump_version(db, ENTITY_TRACKS)
     db.commit()
     return {"updated": success, "failed": failed}
 

@@ -9,7 +9,9 @@ from __future__ import annotations
 # - 主版本：API 协议不兼容变更
 # - 次版本：向后兼容的新功能
 # - 修订号：bug 修复
-NODE_VERSION = "1.1.0"
+# 1.2.0: 新增数据版本号 data_versions，tracks/playlists 表加 deleted_at 软删除，
+#        暴露 /api/{entity}/changes 增量接口，供访问端离线缓存同步
+NODE_VERSION = "1.2.0"
 
 # API 协议主版本
 # 当客户端的 CLIENT_API_VERSION 与此值不一致时，视为完全不兼容，
@@ -18,7 +20,7 @@ API_VERSION = 1
 
 # 该 node 要求的最小客户端版本
 # 低于此版本的客户端将被拒绝连接
-MIN_CLIENT_VERSION = "1.1.0"
+MIN_CLIENT_VERSION = "1.2.0"
 
 # node 支持的功能清单
 # 客户端据此判断哪些功能可用、哪些被禁用
@@ -40,14 +42,23 @@ NODE_FEATURES = [
     "stats",          # 播放统计/数据看板
     "inbox",          # 收集箱
     "import_m3u",     # m3u 播放列表导入
+    "data_sync",      # 数据版本号 + 增量同步接口（/api/{entity}/changes）
 ]
 
 
-def get_version_info() -> dict:
-    """返回版本信息字典（供 /api/version 端点使用）"""
-    return {
+def get_version_info(data_versions: dict[str, int] | None = None) -> dict:
+    """返回版本信息字典（供 /api/version 端点使用）
+
+    Args:
+        data_versions: 数据版本号字典 {tracks: N, playlists: N}，由路由层从 DB 读取后传入。
+                       None 时不包含该字段（向后兼容旧调用方，但 /api/version 路由总会传入）。
+    """
+    info = {
         "version": NODE_VERSION,
         "api_version": API_VERSION,
         "min_client_version": MIN_CLIENT_VERSION,
         "features": list(NODE_FEATURES),
     }
+    if data_versions is not None:
+        info["data_versions"] = data_versions
+    return info

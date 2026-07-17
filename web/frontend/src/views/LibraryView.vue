@@ -27,8 +27,8 @@ const showSource = computed(() => libraryStore.mode === 'search')
 // 选中的曲目（多选）
 const selectedTracks = ref([])
 
-// 是否有已登录节点（控制空状态引导）
-const hasLoggedInNode = computed(() => nodesStore.loggedInNodes.length > 0)
+// 是否有任何节点（在线或离线，离线节点也会展示缓存数据）
+const hasAnyNode = computed(() => nodesStore.nodes.length > 0)
 
 // 本地节点状态（用于空状态展示引导）
 const localNodeAvailable = computed(() => pluginsStore.localNode?.available)
@@ -48,22 +48,41 @@ function onPageChange(p) {
 }
 
 // 播放全部（跨节点：每条曲目自带 __nodeId）
+// 离线节点曲目（__nodeOffline=true）会被过滤掉，无法播放
 function playAll() {
   if (libraryStore.tracks.length === 0) {
     toast.warning('当前曲目列表为空')
     return
   }
-  player.playTracks(libraryStore.tracks, 0)
+  const playable = libraryStore.tracks.filter((t) => !t.__nodeOffline)
+  const skipped = libraryStore.tracks.length - playable.length
+  if (playable.length === 0) {
+    toast.warning('节点离线无法播放', '当前列表全部曲目来自离线节点')
+    return
+  }
+  if (skipped > 0) {
+    toast.info(`已跳过 ${skipped} 首离线曲目`)
+  }
+  player.playTracks(playable, 0)
 }
 
-// 把选中曲目加入队列
+// 把选中曲目加入队列（离线曲目会被过滤掉）
 function addSelectedToQueue() {
   if (selectedTracks.value.length === 0) {
     toast.warning('请先选择曲目')
     return
   }
-  player.appendTracks(selectedTracks.value)
-  toast.success(`已加入 ${selectedTracks.value.length} 首到播放队列`)
+  const playable = selectedTracks.value.filter((t) => !t.__nodeOffline)
+  if (playable.length === 0) {
+    toast.warning('离线曲目无法加入队列', '请选择在线节点的曲目')
+    return
+  }
+  const skipped = selectedTracks.value.length - playable.length
+  if (skipped > 0) {
+    toast.info(`已跳过 ${skipped} 首离线曲目`)
+  }
+  player.appendTracks(playable)
+  toast.success(`已加入 ${playable.length} 首到播放队列`)
 }
 
 // 刷新当前视图
@@ -84,8 +103,8 @@ function goPlugins() {
 }
 
 onMounted(async () => {
-  // 若无已登录节点，探测本地节点状态（用于空状态引导）
-  if (!hasLoggedInNode.value) {
+  // 若无任何节点，探测本地节点状态（用于空状态引导）
+  if (!hasAnyNode.value) {
     await pluginsStore.syncLocalNode(nodesStore)
   }
 })
@@ -132,7 +151,7 @@ watch(
     </div>
 
     <!-- 曲目表 -->
-    <div v-if="hasLoggedInNode" class="flex-1 min-h-0 flex flex-col">
+    <div v-if="hasAnyNode" class="flex-1 min-h-0 flex flex-col">
       <TrackTable
         :tracks="libraryStore.tracks"
         :loading="libraryStore.loading"
@@ -146,11 +165,11 @@ watch(
       />
     </div>
 
-    <!-- 无任何已登录节点：空状态引导 -->
+    <!-- 无任何节点（在线/离线都没有）：空状态引导 -->
     <Empty
       v-else
       :icon="Network"
-      title="尚未连接任何节点"
+      title="尚未添加任何节点"
       description="请前往节点管理添加远程节点，或启用本地节点插件"
       class="flex-1"
     >

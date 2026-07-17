@@ -11,6 +11,11 @@ import {
   listClientPlaylists,
   listClientPlaylistItems
 } from '../api/client_playlist'
+import {
+  refreshLibrary as apiRefreshLibrary,
+  getCachedTracks,
+  getCachedPlaylists
+} from '../api/node_cache'
 
 const toast = useToast()
 
@@ -55,24 +60,71 @@ export const useLibraryStore = defineStore('library', () => {
   const pageSize = ref(20)
 
   /**
-   * 刷新所有已登录节点的播放列表 + 客户端播放列表
+   * 触发后台增量同步（在线节点），不阻塞 UI
+   * 进入工作台或登录状态变化时调用
+   */
+  async function triggerBackgroundSync() {
+    try {
+      await apiRefreshLibrary()
+    } catch (e) {
+      // 同步失败不阻塞 UI，离线节点照常读缓存展示
+      console.warn('[library] 后台同步失败:', e)
+    }
+  }
+
+  /**
+   * 刷新所有节点的播放列表 + 客户端播放列表
+   * - 在线节点：直调节点 API
+   * - 离线节点：读访问端缓存（置灰展示）
    */
   async function refreshAllPlaylists() {
-    const loggedIn = nodesStore.loggedInNodes
-    // 并发拉取每个节点的播放列表
-    const nodeResults = await Promise.allSettled(
-      loggedIn.map(async (n) => {
+    const allNodes = nodesStore.nodes
+    const onlineNodes = allNodes.filter((n) => !!n.token)
+    const offlineNodes = allNodes.filter((n) => !n.token)
+
+    // 在线节点：直调节点 API
+    const onlineResults = await Promise.allSettled(
+      onlineNodes.map(async (n) => {
         const data = await getPlaylists(n)
         const items = Array.isArray(data) ? data : data.items || []
         return { nodeId: n.id, playlists: items }
       })
     )
     const map = {}
-    nodeResults.forEach((r) => {
+    onlineResults.forEach((r) => {
       if (r.status === 'fulfilled') {
         map[r.value.nodeId] = r.value.playlists
       }
     })
+
+    // 离线节点：读缓存（如有）
+    if (offlineNodes.length > 0) {
+      try {
+        const cached = await getCachedPlaylists()
+        const byNode = new Map()
+        for (const p of cached) {
+          if (!byNode.has(p.node_id)) byNode.set(p.node_id, [])
+          byNode.get(p.node_id).push({
+            id: p.playlist_id,
+            name: p.name,
+            owner_id: p.owner_id,
+            is_system: p.is_system,
+            description: p.description,
+            items: p.items || [],
+            __offline: true
+          })
+        }
+        for (const n of offlineNodes) {
+          if (byNode.has(n.id)) {
+            map[n.id] = byNode.get(n.id)
+          }
+        }
+      } catch (e) {
+        // 缓存读取失败不阻塞 UI
+        console.warn('[library] 读取离线节点播放列表缓存失败:', e)
+      }
+    }
+
     nodePlaylists.value = map
 
     // 拉取客户端播放列表
@@ -85,11 +137,13 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
-   * 加载客户端"全部音乐"：聚合所有已登录节点的全部曲目
+   * 加载客户端"全部音乐"：聚合所有节点
+   * - 在线节点：直调节点 API
+   * - 离线节点：读访问端缓存（置灰展示，__nodeOffline=true）
    */
   async function loadAllTracks() {
-    const loggedIn = nodesStore.loggedInNodes
-    if (loggedIn.length === 0) {
+    const allNodes = nodesStore.nodes
+    if (allNodes.length === 0) {
       tracks.value = []
       tracksTotal.value = 0
       mode.value = 'empty'
@@ -98,21 +152,64 @@ export const useLibraryStore = defineStore('library', () => {
     loading.value = true
     try {
       const q = keyword.value || undefined
-      const results = await Promise.allSettled(
-        loggedIn.map(async (n) => {
+      const onlineNodes = allNodes.filter((n) => !!n.token)
+      const offlineNodes = allNodes.filter((n) => !n.token)
+
+      // 在线节点直调
+      const onlineResults = await Promise.allSettled(
+        onlineNodes.map(async (n) => {
           const data = await getTracks(n, { page: 1, size: 100000, q })
           const items = data.items || data.tracks || []
           return items.map((t) => ({
             ...t,
             __nodeId: t.__nodeId ?? n.id,
-            __nodeName: t.__nodeName ?? n.name
+            __nodeName: t.__nodeName ?? n.name,
+            __nodeOffline: false
           }))
         })
       )
+
+      // 离线节点读缓存
+      let offlineTracks = []
+      if (offlineNodes.length > 0) {
+        try {
+          const cached = await getCachedTracks({ q })
+          const offlineIds = new Set(offlineNodes.map((n) => n.id))
+          const nodeNameById = new Map(offlineNodes.map((n) => [n.id, n.name]))
+          offlineTracks = cached
+            .filter((c) => offlineIds.has(c.node_id))
+            .map((c) => ({
+              id: c.track_id,
+              title: c.title,
+              artist: c.artist,
+              album: c.album,
+              album_artist: c.album_artist,
+              track_no: c.track_no,
+              year: c.year,
+              genre: c.genre,
+              duration: c.duration,
+              bitrate: c.bitrate,
+              sample_rate: c.sample_rate,
+              channels: c.channels,
+              file_size: c.file_size,
+              cover_embedded: c.cover_embedded,
+              lyrics_embedded: c.lyrics_embedded,
+              format_priority: c.format_priority,
+              quality_score: c.quality_score,
+              __nodeId: c.node_id,
+              __nodeName: nodeNameById.get(c.node_id) || `节点 ${c.node_id}`,
+              __nodeOffline: true
+            }))
+        } catch (e) {
+          console.warn('[library] 读取离线节点曲库缓存失败:', e)
+        }
+      }
+
       const merged = []
-      results.forEach((r) => {
+      onlineResults.forEach((r) => {
         if (r.status === 'fulfilled') merged.push(...r.value)
       })
+      merged.push(...offlineTracks)
       tracks.value = merged
       tracksTotal.value = merged.length
       mode.value = 'all'
@@ -130,15 +227,60 @@ export const useLibraryStore = defineStore('library', () => {
 
   /**
    * 加载某节点的"全部音乐"
+   * - 在线：直调节点 API
+   * - 离线：读访问端缓存
    */
   async function loadNodeAllTracks(nodeId) {
     const node = nodesStore.getNode(nodeId)
-    if (!node || !node.token) {
+    if (!node) {
       tracks.value = []
       tracksTotal.value = 0
       mode.value = 'empty'
       return
     }
+
+    // 离线节点：读缓存
+    if (!node.token) {
+      loading.value = true
+      try {
+        const cached = await getCachedTracks({ node_id: nodeId, q: keyword.value || undefined })
+        tracks.value = cached.map((c) => ({
+          id: c.track_id,
+          title: c.title,
+          artist: c.artist,
+          album: c.album,
+          album_artist: c.album_artist,
+          track_no: c.track_no,
+          year: c.year,
+          genre: c.genre,
+          duration: c.duration,
+          bitrate: c.bitrate,
+          sample_rate: c.sample_rate,
+          channels: c.channels,
+          file_size: c.file_size,
+          cover_embedded: c.cover_embedded,
+          lyrics_embedded: c.lyrics_embedded,
+          format_priority: c.format_priority,
+          quality_score: c.quality_score,
+          __nodeId: node.id,
+          __nodeName: node.name,
+          __nodeOffline: true
+        }))
+        tracksTotal.value = tracks.value.length
+        mode.value = 'node-all'
+        currentNodeId.value = nodeId
+        currentPlaylistId.value = null
+        currentPlaylistType.value = null
+      } catch (e) {
+        toast.error('节点离线读取缓存失败', e)
+        tracks.value = []
+        tracksTotal.value = 0
+      } finally {
+        loading.value = false
+      }
+      return
+    }
+
     loading.value = true
     try {
       const data = await getTracks(node, {
@@ -150,7 +292,8 @@ export const useLibraryStore = defineStore('library', () => {
       tracks.value = items.map((t) => ({
         ...t,
         __nodeId: t.__nodeId ?? node.id,
-        __nodeName: t.__nodeName ?? node.name
+        __nodeName: t.__nodeName ?? node.name,
+        __nodeOffline: false
       }))
       tracksTotal.value = data.total || tracks.value.length
       mode.value = 'node-all'
@@ -168,15 +311,56 @@ export const useLibraryStore = defineStore('library', () => {
 
   /**
    * 加载某节点的播放列表曲目（含节点"收集箱"）
+   * - 在线：直调节点 API
+   * - 离线：读访问端缓存的播放列表 items
    */
   async function loadNodePlaylistTracks(nodeId, playlistId) {
     const node = nodesStore.getNode(nodeId)
-    if (!node || !node.token) {
+    if (!node) {
       tracks.value = []
       tracksTotal.value = 0
       mode.value = 'empty'
       return
     }
+
+    // 离线节点：读缓存
+    if (!node.token) {
+      loading.value = true
+      try {
+        const cached = await getCachedPlaylists({ node_id: nodeId })
+        const pl = cached.find((p) => p.playlist_id === playlistId)
+        if (!pl) {
+          toast.warning('节点离线，缓存中无此播放列表')
+          tracks.value = []
+          tracksTotal.value = 0
+          mode.value = 'empty'
+          return
+        }
+        const items = pl.items || []
+        tracks.value = items
+          .map((it) => it.track || it)
+          .filter(Boolean)
+          .map((t) => ({
+            ...t,
+            __nodeId: node.id,
+            __nodeName: node.name,
+            __nodeOffline: true
+          }))
+        tracksTotal.value = tracks.value.length
+        mode.value = 'node-playlist'
+        currentNodeId.value = nodeId
+        currentPlaylistId.value = playlistId
+        currentPlaylistType.value = 'node'
+      } catch (e) {
+        toast.error('节点离线读取缓存失败', e)
+        tracks.value = []
+        tracksTotal.value = 0
+      } finally {
+        loading.value = false
+      }
+      return
+    }
+
     loading.value = true
     try {
       const data = await getPlaylistDetail(node, playlistId)
@@ -187,7 +371,8 @@ export const useLibraryStore = defineStore('library', () => {
         .map((t) => ({
           ...t,
           __nodeId: t.__nodeId ?? node.id,
-          __nodeName: t.__nodeName ?? node.name
+          __nodeName: t.__nodeName ?? node.name,
+          __nodeOffline: false
         }))
       tracksTotal.value = tracks.value.length
       mode.value = 'node-playlist'
@@ -244,27 +429,77 @@ export const useLibraryStore = defineStore('library', () => {
 
   /**
    * 跨节点搜索
+   * - 在线节点：直调节点 API
+   * - 离线节点：读访问端缓存（置灰展示）
    */
   async function globalSearch(q) {
     if (!q) return
-    const loggedIn = nodesStore.loggedInNodes
-    if (loggedIn.length === 0) {
-      toast.warning('尚未登录任何节点，请先在节点管理中登录')
+    const allNodes = nodesStore.nodes
+    if (allNodes.length === 0) {
+      toast.warning('尚未配置任何节点，请先在节点管理中添加')
       return
     }
     searchLoading.value = true
     try {
-      const results = await Promise.allSettled(
-        loggedIn.map(async (n) => {
+      const onlineNodes = allNodes.filter((n) => !!n.token)
+      const offlineNodes = allNodes.filter((n) => !n.token)
+
+      // 在线节点搜索
+      const onlineResults = await Promise.allSettled(
+        onlineNodes.map(async (n) => {
           const data = await getTracks(n, { q, page: 1, page_size: 50 })
           const items = data.items || data.tracks || []
-          return items.map((t) => ({ track: t, nodeId: n.id, nodeName: n.name }))
+          return items.map((t) => ({
+            track: { ...t, __nodeOffline: false },
+            nodeId: n.id,
+            nodeName: n.name
+          }))
         })
       )
+
+      // 离线节点缓存搜索
+      let offlineMatches = []
+      if (offlineNodes.length > 0) {
+        try {
+          const cached = await getCachedTracks({ q })
+          const offlineIds = new Set(offlineNodes.map((n) => n.id))
+          const nodeNameById = new Map(offlineNodes.map((n) => [n.id, n.name]))
+          offlineMatches = cached
+            .filter((c) => offlineIds.has(c.node_id))
+            .map((c) => ({
+              track: {
+                id: c.track_id,
+                title: c.title,
+                artist: c.artist,
+                album: c.album,
+                album_artist: c.album_artist,
+                track_no: c.track_no,
+                year: c.year,
+                genre: c.genre,
+                duration: c.duration,
+                bitrate: c.bitrate,
+                sample_rate: c.sample_rate,
+                channels: c.channels,
+                file_size: c.file_size,
+                cover_embedded: c.cover_embedded,
+                lyrics_embedded: c.lyrics_embedded,
+                format_priority: c.format_priority,
+                quality_score: c.quality_score,
+                __nodeOffline: true
+              },
+              nodeId: c.node_id,
+              nodeName: nodeNameById.get(c.node_id) || `节点 ${c.node_id}`
+            }))
+        } catch (e) {
+          console.warn('[library] 离线节点缓存搜索失败:', e)
+        }
+      }
+
       const merged = []
-      results.forEach((r) => {
+      onlineResults.forEach((r) => {
         if (r.status === 'fulfilled') merged.push(...r.value)
       })
+      merged.push(...offlineMatches)
       searchResults.value = merged
       tracks.value = merged.map((m) => ({
         ...m.track,
@@ -287,16 +522,21 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
-   * 监听节点登录/登出/删除事件，自动刷新所有播放列表
+   * 监听节点登录/登出/删除事件
+   * 1. 触发后台增量同步（在线节点缓存刷新）
+   * 2. 刷新所有节点播放列表（在线直调+离线读缓存）
+   * 3. 自动加载"全部音乐"（若当前为空视图）
    */
   watch(
     () => nodesStore.authVersion,
     () => {
+      // 后台同步不阻塞 UI
+      triggerBackgroundSync()
       refreshAllPlaylists().then(() => {
-        // 登录后若当前为空视图，自动加载客户端"全部音乐"
-        if (mode.value === 'empty' && nodesStore.loggedInNodes.length > 0) {
+        // 登录/状态变化后若当前为空视图，自动加载聚合"全部音乐"
+        if (mode.value === 'empty' && nodesStore.nodes.length > 0) {
           loadAllTracks()
-        } else if (nodesStore.loggedInNodes.length === 0) {
+        } else if (nodesStore.nodes.length === 0) {
           tracks.value = []
           tracksTotal.value = 0
           mode.value = 'empty'
@@ -321,6 +561,7 @@ export const useLibraryStore = defineStore('library', () => {
     page,
     pageSize,
     refreshAllPlaylists,
+    triggerBackgroundSync,
     loadAllTracks,
     loadNodeAllTracks,
     loadNodePlaylistTracks,

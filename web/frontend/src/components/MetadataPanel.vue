@@ -27,7 +27,9 @@ import { useToast } from '@/components/ui/toast/use-toast'
 
 const props = defineProps({
   tracks: { type: Array, default: () => [] },
-  visible: { type: Boolean, default: false }
+  visible: { type: Boolean, default: false },
+  // 只读模式：用于离线节点曲目，仅展示元数据，不允许编辑/保存
+  readonly: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['update:visible', 'updated'])
@@ -176,8 +178,9 @@ async function initFieldStates() {
   }
 
   // 2. 调用 batch_preview API 获取所有字段的真实值（含非 DB 字段）
+  // 离线只读模式下跳过远程预览（节点不可达，且曲目不属于本地节点）
   const node = authStore.localNode
-  if (!node) return
+  if (!node || props.readonly) return
 
   fieldsLoading.value = true
   try {
@@ -281,7 +284,7 @@ async function loadLyrics() {
   lyricsMixed.value = false
   if (props.tracks.length === 0) return
   const node = authStore.localNode
-  if (!node) return
+  if (!node || props.readonly) return
 
   // 单首直接拉取
   if (props.tracks.length === 1) {
@@ -700,7 +703,10 @@ function getFileFieldValue(field) {
               </div>
               <p class="mt-0.5 text-xs text-muted-foreground">
                 {{ selectedCount }} 首曲目
-                <template v-if="globalDirty">
+                <template v-if="props.readonly">
+                  · <span class="font-medium text-amber-500">节点离线·只读</span>
+                </template>
+                <template v-else-if="globalDirty">
                   · <span class="font-medium text-red-500">有未保存修改</span>
                 </template>
               </p>
@@ -837,7 +843,7 @@ function getFileFieldValue(field) {
                         :class="fieldStates[f.key]?.isDirty
                           ? 'border-red-500/50 focus-visible:ring-red-500/30'
                           : ''"
-                        :disabled="saving"
+                        :disabled="saving || props.readonly"
                         @input="onFieldInput(f.key)"
                       />
                     </div>
@@ -885,13 +891,13 @@ function getFileFieldValue(field) {
                   v-model="lyricsText"
                   class="h-full min-h-[400px] w-full flex-1 resize-none rounded-md border border-border bg-background p-3 font-mono text-sm leading-relaxed text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 select-text"
                   :placeholder="lyricsMixed ? '多首曲目歌词不一致，输入新内容将覆盖全部' : '输入歌词（支持 LRC 时间戳格式）'"
-                  :disabled="lyricsSaving"
+                  :disabled="lyricsSaving || props.readonly"
                 ></textarea>
                 <div class="mt-3 flex items-center justify-between">
                   <Button
                     variant="ghost"
                     size="sm"
-                    :disabled="!lyricsDirty || lyricsSaving"
+                    :disabled="!lyricsDirty || lyricsSaving || props.readonly"
                     @click="resetLyrics"
                   >
                     <RotateCcw class="h-3.5 w-3.5" />
@@ -900,7 +906,7 @@ function getFileFieldValue(field) {
                   <Button
                     variant="gold"
                     size="sm"
-                    :disabled="!lyricsDirty || lyricsSaving"
+                    :disabled="!lyricsDirty || lyricsSaving || props.readonly"
                     @click="saveLyrics"
                   >
                     <Save class="h-3.5 w-3.5" />
@@ -932,7 +938,7 @@ function getFileFieldValue(field) {
                     <Button
                       variant="gold"
                       size="sm"
-                      :disabled="coverUploading || selectedCount === 0"
+                      :disabled="coverUploading || selectedCount === 0 || props.readonly"
                       @click="triggerCoverUpload"
                     >
                       <Upload class="h-3.5 w-3.5" />
@@ -941,7 +947,7 @@ function getFileFieldValue(field) {
                     <Button
                       variant="destructive"
                       size="sm"
-                      :disabled="coverRemoving || selectedCount === 0"
+                      :disabled="coverRemoving || selectedCount === 0 || props.readonly"
                       @click="removeCover"
                     >
                       <Trash2 class="h-3.5 w-3.5" />
@@ -995,7 +1001,7 @@ function getFileFieldValue(field) {
               <Button
                 variant="ghost"
                 size="sm"
-                :disabled="!hasDirty || saving"
+                :disabled="!hasDirty || saving || props.readonly"
                 @click="resetAllMetadata"
               >
                 <RotateCcw class="h-3.5 w-3.5" />
@@ -1004,7 +1010,7 @@ function getFileFieldValue(field) {
               <Button
                 variant="gold"
                 size="sm"
-                :disabled="!hasDirty || saving"
+                :disabled="!hasDirty || saving || props.readonly"
                 @click="saveMetadata"
               >
                 <Save class="h-3.5 w-3.5" />
