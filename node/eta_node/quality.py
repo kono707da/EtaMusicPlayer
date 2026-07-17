@@ -34,6 +34,8 @@ def find_upgrades_in_playlist(db: Session, playlist_id: int) -> list[dict]:
 
     找出全库中与其"同曲"但 quality_score 更高的候选，
     返回 {current_track_id, candidates: [...], best_candidate_id}
+
+    1.2.1：排除软删除曲目；同时过滤引用软删除曲目的 PlaylistItem。
     """
     items = (
         db.query(PlaylistItem)
@@ -42,7 +44,8 @@ def find_upgrades_in_playlist(db: Session, playlist_id: int) -> list[dict]:
     )
     current_track_ids = {it.track_id for it in items}
 
-    all_tracks = db.query(Track).all()
+    # 1.2.1：排除软删除曲目（候选库）
+    all_tracks = db.query(Track).filter(Track.deleted_at.is_(None)).all()
     # 按 (title_lower, album_lower, artist_lower) 建立索引
     index: dict = {}
     for t in all_tracks:
@@ -58,7 +61,8 @@ def find_upgrades_in_playlist(db: Session, playlist_id: int) -> list[dict]:
     results: list[dict] = []
     for it in items:
         current = db.get(Track, it.track_id)
-        if current is None or not current.title:
+        # 1.2.1：跳过软删除当前曲目
+        if current is None or current.deleted_at is not None or not current.title:
             continue
         key = (
             current.title.strip().lower(),
@@ -89,7 +93,10 @@ def find_upgrades_in_playlist(db: Session, playlist_id: int) -> list[dict]:
 def replace_in_playlist(
     db: Session, playlist_id: int, old_track_id: int, new_track_id: int
 ) -> bool:
-    """仅修改 PlaylistItem 的 track_id 指向，保留 position 和 added_at，不删原文件"""
+    """仅修改 PlaylistItem 的 track_id 指向，保留 position 和 added_at，不删原文件
+
+    1.2.1：拒绝替换到软删除曲目。
+    """
     item = (
         db.query(PlaylistItem)
         .filter(
@@ -100,9 +107,9 @@ def replace_in_playlist(
     )
     if item is None:
         return False
-    # 确认新曲目存在
+    # 确认新曲目存在且未软删除
     new_track = db.get(Track, new_track_id)
-    if new_track is None:
+    if new_track is None or new_track.deleted_at is not None:
         return False
     # 防止重复（若新曲目已在列表中，则直接删除旧条目）
     existing_new = (

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from mutagen import File as MutagenFile  # type: ignore
 from mutagen.flac import FLAC  # type: ignore
@@ -14,9 +14,9 @@ from mutagen.mp4 import MP4  # type: ignore
 from sqlalchemy.orm import Session
 
 from eta_node.database import get_db
-from eta_node.deps import get_current_user_dependency, get_user_from_query_token
-from eta_node.models import Playlist, PlaylistItem, PlaylistPermission, Track, User
-from eta_node.schemas import PaginatedTracks, TrackOut
+from eta_node.deps import get_current_user_dependency, get_user_from_query_token, require_admin
+from eta_node.models import NodeTask, Playlist, PlaylistItem, PlaylistPermission, Track, User
+from eta_node.schemas import NodeTaskOut, PaginatedTracks, TrackOut
 
 
 router = APIRouter(prefix="/api/tracks", tags=["tracks"])
@@ -37,30 +37,45 @@ CONTENT_TYPES = {
 
 
 def _visible_playlist_ids(db: Session, user: User) -> set[int]:
-    """返回当前用户可见的播放列表 ID 集合（拥有 + 被授权 + 系统）"""
+    """返回当前用户可见的播放列表 ID 集合（拥有 + 被授权 + 系统；排除软删除列表）"""
     ids: set[int] = set()
-    owned = db.query(Playlist.id).filter(Playlist.owner_id == user.id).all()
+    owned = (
+        db.query(Playlist.id)
+        .filter(Playlist.owner_id == user.id, Playlist.deleted_at.is_(None))
+        .all()
+    )
     for (pid,) in owned:
         ids.add(pid)
     granted = (
         db.query(PlaylistPermission.playlist_id)
-        .filter(PlaylistPermission.user_id == user.id)
+        .join(Playlist, PlaylistPermission.playlist_id == Playlist.id)
+        .filter(
+            PlaylistPermission.user_id == user.id,
+            Playlist.deleted_at.is_(None),
+        )
         .all()
     )
     for (pid,) in granted:
         ids.add(pid)
-    system = db.query(Playlist.id).filter(Playlist.is_system.is_(True)).all()
+    system = (
+        db.query(Playlist.id)
+        .filter(Playlist.is_system.is_(True), Playlist.deleted_at.is_(None))
+        .all()
+    )
     for (pid,) in system:
         ids.add(pid)
     return ids
 
 
 def _check_track_visible(db: Session, track_id: int, user: User) -> Track:
-    """校验当前用户是否有权访问该曲目"""
+    """校验当前用户是否有权访问该曲目
+
+    软删除曲目一律 404，包括 admin（避免泄露存在性）。
+    """
     track = db.get(Track, track_id)
-    if track is None:
+    if track is None or track.deleted_at is not None:
         raise HTTPException(status_code=404, detail="曲目不存在")
-    # admin 可见全部
+    # admin 可见全部（仅未软删除）
     if user.is_admin:
         return track
     visible_pids = _visible_playlist_ids(db, user)
@@ -70,6 +85,7 @@ def _check_track_visible(db: Session, track_id: int, user: User) -> Track:
         .filter(
             PlaylistItem.track_id == track_id,
             PlaylistItem.playlist_id.in_(visible_pids),
+            Playlist.deleted_at.is_(None),
         )
         .first()
     )
@@ -89,10 +105,10 @@ def list_tracks(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_dependency),
 ) -> PaginatedTracks:
-    """曲目分页列表（按用户权限过滤）"""
+    """曲目分页列表（按用户权限过滤，自动排除软删除）"""
     visible_pids = _visible_playlist_ids(db, user)
 
-    query = db.query(Track)
+    query = db.query(Track).filter(Track.deleted_at.is_(None))
     if not user.is_admin or playlist_id is not None:
         # 限制到可见播放列表的曲目
         if playlist_id is not None:
@@ -100,14 +116,22 @@ def list_tracks(
                 raise HTTPException(status_code=403, detail="无权访问该播放列表")
             track_ids = (
                 db.query(PlaylistItem.track_id)
-                .filter(PlaylistItem.playlist_id == playlist_id)
+                .join(PlaylistItem.playlist)
+                .filter(
+                    PlaylistItem.playlist_id == playlist_id,
+                    Playlist.deleted_at.is_(None),
+                )
                 .distinct()
             )
             query = query.filter(Track.id.in_(track_ids))
         else:
             track_ids = (
                 db.query(PlaylistItem.track_id)
-                .filter(PlaylistItem.playlist_id.in_(visible_pids))
+                .join(PlaylistItem.playlist)
+                .filter(
+                    PlaylistItem.playlist_id.in_(visible_pids),
+                    Playlist.deleted_at.is_(None),
+                )
                 .distinct()
             )
             query = query.filter(Track.id.in_(track_ids))
@@ -145,6 +169,49 @@ def get_track(
     """曲目详情"""
     track = _check_track_visible(db, track_id, user)
     return TrackOut.model_validate(track)
+
+
+@router.post("/{track_id}/delete", response_model=NodeTaskOut, status_code=201)
+def submit_track_delete(
+    track_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> NodeTaskOut:
+    """提交曲目删除任务（admin）
+
+    - 校验曲目存在且未软删除
+    - 同一曲目已有 pending/running 的 track_delete 任务时返回该任务，避免并发删除
+    - 返回 NodeTaskOut，前端轮询 /api/tasks/{id} 查询结果
+    """
+    track = db.get(Track, track_id)
+    if track is None or track.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="曲目不存在")
+
+    # 幂等：同曲目已有未完成删除任务时直接返回
+    existing = (
+        db.query(NodeTask)
+        .filter(
+            NodeTask.task_type == "track_delete",
+            NodeTask.status.in_(("pending", "running")),
+        )
+        .all()
+    )
+    for t in existing:
+        payload = t.payload or {}
+        if payload.get("track_id") == track_id:
+            return NodeTaskOut.model_validate(t)
+
+    task = NodeTask(
+        task_type="track_delete",
+        status="pending",
+        priority=10,
+        payload={"track_id": track_id},
+        submitted_by=user.username,
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return NodeTaskOut.model_validate(task)
 
 
 @router.get("/{track_id}/stream")

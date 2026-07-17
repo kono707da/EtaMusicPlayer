@@ -100,7 +100,19 @@ def _get_or_create_sync_state(db: Session, node_id: int, entity: str) -> NodeSyn
 
 
 def _apply_track_changes(db: Session, node_id: int, changes: list[dict]) -> None:
-    """将曲库变更应用到缓存表"""
+    """将曲库变更应用到缓存表
+
+    1.2.1：当曲目被节点软删除时（ch.deleted=true），同步清理所有引用该曲目的
+    客户端播放列表条目（ClientPlaylistItem），保持跨层一致性。
+    """
+    from eta_web.client_playlists.models import ClientPlaylistItem
+
+    # 客户端播放列表项使用的 node_id 字符串格式：remote-{id}
+    client_node_id = f"remote-{node_id}"
+
+    # 收集本次被软删除的曲目 id，用于批量清理客户端引用
+    deleted_track_ids: list[int] = []
+
     for ch in changes:
         track_id = ch["id"]
         existing = (
@@ -111,6 +123,7 @@ def _apply_track_changes(db: Session, node_id: int, changes: list[dict]) -> None
         if ch.get("deleted"):
             if existing is not None:
                 existing.is_deleted = True
+            deleted_track_ids.append(track_id)
             continue
         if existing is None:
             existing = NodeTrackCache(node_id=node_id, track_id=track_id)
@@ -132,6 +145,22 @@ def _apply_track_changes(db: Session, node_id: int, changes: list[dict]) -> None
         existing.format_priority = ch.get("format_priority", 1)
         existing.quality_score = ch.get("quality_score", 0)
         existing.is_deleted = False
+
+    # 批量清理客户端播放列表中被软删除曲目的引用（1.2.1）
+    if deleted_track_ids:
+        removed = (
+            db.query(ClientPlaylistItem)
+            .filter(
+                ClientPlaylistItem.node_id == client_node_id,
+                ClientPlaylistItem.track_id.in_(deleted_track_ids),
+            )
+            .delete(synchronize_session=False)
+        )
+        if removed > 0:
+            logger.info(
+                "节点 %s 同步发现 %d 首曲目被软删除，清理 %d 个客户端播放列表引用",
+                node_id, len(deleted_track_ids), removed,
+            )
 
 
 def _apply_playlist_changes(db: Session, node_id: int, changes: list[dict]) -> None:

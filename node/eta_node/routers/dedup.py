@@ -89,17 +89,26 @@ def get_last_groups(
 
 
 def _build_groups(db: Session, raw_groups: list[dict]) -> list[DedupGroup]:
-    """构造带 TrackOut 的重复组列表"""
+    """构造带 TrackOut 的重复组列表
+
+    1.2.1：双重保险，再次过滤软删除曲目，避免外部传入的 ids 包含已删除项。
+    """
     result: list[DedupGroup] = []
     for g in raw_groups:
         ids = g.get("track_ids", [])
         if not ids:
             continue
-        tracks = db.query(Track).filter(Track.id.in_(ids)).all()
+        tracks = (
+            db.query(Track)
+            .filter(Track.id.in_(ids), Track.deleted_at.is_(None))
+            .all()
+        )
+        # 仅保留实际未软删除的 track_id，保证 track_ids 与 tracks 一致
+        valid_ids = [t.id for t in tracks]
         result.append(
             DedupGroup(
                 group_key=g.get("group_key", ""),
-                track_ids=ids,
+                track_ids=valid_ids,
                 tracks=[TrackOut.model_validate(t) for t in tracks],
             )
         )

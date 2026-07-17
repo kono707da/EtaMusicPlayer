@@ -39,6 +39,9 @@ _ALLOWED_TASK_TYPES = {
     "permission_revoke",
     "dedup_update",
     "import_m3u",
+    # 1.2.1：曲目文件删除（领域接口 POST /api/tracks/{id}/delete 为主要入口，
+    # 通用 /api/tasks 也允许，便于运维或脚本调用）
+    "track_delete",
 }
 
 

@@ -91,6 +91,10 @@ class Track(Base):
 
     file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     file_mtime: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # SHA-256 文件内容哈希（仅在启用哈希去重或显式检测时计算，按 file_size + file_mtime 缓存）
+    # 1.2.1 起：替代旧 dedup.py 中用 file_size 假装 file_hash 的伪实现
+    file_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    file_hash_mtime: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     cover_embedded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     lyrics_embedded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

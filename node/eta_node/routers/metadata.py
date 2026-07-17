@@ -142,7 +142,12 @@ def batch_write_lyrics(
     if not isinstance(track_ids, list) or not track_ids:
         raise HTTPException(status_code=400, detail="track_ids 不能为空")
 
-    tracks = db.query(Track).filter(Track.id.in_(track_ids)).all()
+    # 1.2.1：排除软删除曲目
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(track_ids), Track.deleted_at.is_(None))
+        .all()
+    )
     success = 0
     failed: list[dict] = []
     for t in tracks:
@@ -201,7 +206,12 @@ async def batch_upload_cover(
         raise HTTPException(status_code=400, detail="上传文件为空")
     mime = _detect_image_mime(content)
 
-    tracks = db.query(Track).filter(Track.id.in_(ids)).all()
+    # 1.2.1：排除软删除曲目
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(ids), Track.deleted_at.is_(None))
+        .all()
+    )
     success = 0
     failed: list[dict] = []
     for t in tracks:
@@ -238,7 +248,12 @@ def batch_remove_cover(
     from mutagen.flac import FLAC
     from mutagen.mp4 import MP4
 
-    tracks = db.query(Track).filter(Track.id.in_(track_ids)).all()
+    # 1.2.1：排除软删除曲目
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(track_ids), Track.deleted_at.is_(None))
+        .all()
+    )
     success = 0
     failed: list[dict] = []
     for t in tracks:

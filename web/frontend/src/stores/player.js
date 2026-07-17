@@ -234,6 +234,64 @@ export const usePlayerStore = defineStore('player', () => {
     duration.value = 0
   }
 
+  /**
+   * 1.2.1：从播放队列移除指定曲目（删除文件后调用）
+   * - 队列内匹配 (nodeId, trackId) 的条目全部移除（理论上唯一，但保险起见全部清理）
+   * - 若移除的是当前播放曲目：自动切换到下一首；若已是最后一首则停止
+   * - 若移除的在当前之前：currentIndex 前移
+   * - 若移除的在当前之后：currentIndex 不变
+   * @param {Number} nodeId 节点 ID（数字）
+   * @param {Number} trackId 曲目 ID
+   */
+  function removeTrack(nodeId, trackId) {
+    if (!queue.value.length) return
+    const oldIndex = currentIndex.value
+    // 收集所有要删除的索引
+    const removeIndices = new Set()
+    queue.value.forEach((item, idx) => {
+      if (item.nodeId === nodeId && item.track?.id === trackId) {
+        removeIndices.add(idx)
+      }
+    })
+    if (removeIndices.size === 0) return
+
+    // 计算新队列
+    const newQueue = queue.value.filter((_, idx) => !removeIndices.has(idx))
+    const removedBeforeCurrent = Array.from(removeIndices).filter(
+      (i) => i < oldIndex
+    ).length
+    const currentRemoved = removeIndices.has(oldIndex)
+    const newLen = newQueue.length
+
+    queue.value = newQueue
+
+    if (newLen === 0) {
+      // 队列清空
+      if (howl) {
+        howl.unload()
+        howl = null
+      }
+      currentIndex.value = -1
+      isPlaying.value = false
+      progress.value = 0
+      duration.value = 0
+      return
+    }
+
+    if (currentRemoved) {
+      // 当前播放曲目被删除：切到原 currentIndex 在新队列中的位置
+      // 若原 currentIndex 已超出新队列范围，取最后一首
+      const newIndex = Math.min(oldIndex - removedBeforeCurrent, newLen - 1)
+      currentIndex.value = Math.max(0, newIndex)
+      // 重新加载播放（不再上报 skip 事件，因为是删除触发的）
+      loadCurrent()
+    } else if (removedBeforeCurrent > 0) {
+      // 当前未删除，但前面被删了一些，需要前移
+      currentIndex.value = oldIndex - removedBeforeCurrent
+    }
+    // 若删除在当前之后：currentIndex 不变
+  }
+
   return {
     queue,
     currentIndex,
@@ -256,6 +314,7 @@ export const usePlayerStore = defineStore('player', () => {
     seek,
     tick,
     setVolume,
-    clearQueue
+    clearQueue,
+    removeTrack
   }
 })

@@ -7,7 +7,7 @@
  */
 
 // 客户端软件版本号
-export const CLIENT_VERSION = '1.2.0'
+export const CLIENT_VERSION = '1.2.1'
 
 // 客户端支持的 API 协议主版本
 // 与 node 的 API_VERSION 不一致时，视为完全不兼容
@@ -16,6 +16,7 @@ export const CLIENT_API_VERSION = 1
 // 客户端要求的最低 node 版本
 // 低于此版本的 node 将被拒绝连接
 // 1.2.0 起：节点需支持 data_sync 功能（曲库/播放列表增量同步与离线缓存）
+// 1.2.1 起：节点需支持曲目删除与软删除一致性（track_delete 任务、真 SHA-256 file_hash）
 export const MIN_NODE_VERSION = '1.2.0'
 
 /**

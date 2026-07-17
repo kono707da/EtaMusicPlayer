@@ -1,15 +1,16 @@
 <script setup>
 import { computed, ref, watch, nextTick, onUnmounted } from 'vue'
-import { Check, Loader2, Play, Plus, Columns3, Music, Pencil, ListMusic } from 'lucide-vue-next'
+import { Check, Loader2, Play, Plus, Columns3, Music, Pencil, ListMusic, Trash2, X, Square } from 'lucide-vue-next'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { usePlayerStore } from '../stores/player'
 import { useAuthStore } from '../stores/auth'
 import { useLibraryStore } from '../stores/library'
 import { useNodesStore } from '../stores/nodes'
-import { getCoverUrl, updateMetadataField, addTracksToPlaylist } from '../api/node'
-import { addClientPlaylistItems } from '../api/client_playlist'
+import { getCoverUrl, updateMetadataField, addTracksToPlaylist, removeTracksFromPlaylist } from '../api/node'
+import { addClientPlaylistItems, removeClientPlaylistItems } from '../api/client_playlist'
 import AddToPlaylistDialog from './AddToPlaylistDialog.vue'
 import MetadataPanel from './MetadataPanel.vue'
+import DeleteTrackDialog from './DeleteTrackDialog.vue'
 import {
   Table,
   TableHeader,
@@ -335,6 +336,153 @@ function editMetadata() {
 // MetadataPanel 保存成功后的回调
 function onMetadataUpdated() {
   emit('metadata-updated')
+}
+
+// ==================== 删除曲目文件（1.2.1） ====================
+
+// DeleteTrackDialog 状态
+const deleteTrackDialogVisible = ref(false)
+const deleteTrackDialogRow = ref(null)
+
+// 右键：删除曲目文件（仅 admin + 在线节点）
+function deleteTrackFile() {
+  const row = contextMenu.value.row
+  if (!row) {
+    closeContextMenu()
+    return
+  }
+  if (!authStore.isAdmin) {
+    toast.warning('需要管理员权限', '只有管理员可以删除曲目文件')
+    closeContextMenu()
+    return
+  }
+  if (row.__nodeOffline) {
+    toast.warning('节点离线无法删除', '该曲目来源节点当前不可用')
+    closeContextMenu()
+    return
+  }
+  if (row.__nodeId == null) {
+    toast.warning('缺少来源节点信息', '无法删除')
+    closeContextMenu()
+    return
+  }
+  deleteTrackDialogRow.value = row
+  deleteTrackDialogVisible.value = true
+  closeContextMenu()
+}
+
+// DeleteTrackDialog 完成后的回调（节点已成功删除）
+async function onDeleteTrackDone(result) {
+  deleteTrackDialogVisible.value = false
+  const row = deleteTrackDialogRow.value
+  deleteTrackDialogRow.value = null
+  if (!row) return
+
+  // 1. 从播放队列移除该曲目
+  player.removeTrack(row.__nodeId, row.id)
+
+  // 2. 触发后台同步（让访问端缓存更新；sync_service 会清理客户端引用）
+  try {
+    await libraryStore.triggerBackgroundSync()
+  } catch (e) {
+    // 同步失败不阻塞
+  }
+
+  // 3. 重新加载当前视图
+  await libraryStore.reloadCurrentView()
+
+  // 4. 刷新播放列表（左侧树）以便数量更新
+  try {
+    await libraryStore.refreshAllPlaylists()
+  } catch (e) {
+    // 失败不阻塞
+  }
+
+  if (result?.warning) {
+    toast.warning('曲目已删除', result.warning)
+  } else {
+    toast.success('曲目已删除')
+  }
+}
+
+// DeleteTrackDialog 取消
+function onDeleteTrackCancel() {
+  deleteTrackDialogVisible.value = false
+  deleteTrackDialogRow.value = null
+}
+
+// ==================== 从播放列表移除（1.2.1） ====================
+
+// 是否在播放列表上下文中（节点播放列表或客户端播放列表）
+const inPlaylistContext = computed(() =>
+  libraryStore.mode === 'node-playlist' || libraryStore.mode === 'client-playlist'
+)
+
+// 右键：从当前播放列表移除（仅移除引用，不删除文件）
+async function removeFromList() {
+  const row = contextMenu.value.row
+  if (!row) {
+    closeContextMenu()
+    return
+  }
+  if (!inPlaylistContext.value) {
+    toast.warning('当前不在播放列表')
+    closeContextMenu()
+    return
+  }
+  closeContextMenu()
+
+  // 客户端播放列表：通过 item_id 删除
+  if (libraryStore.mode === 'client-playlist') {
+    const playlistId = libraryStore.currentPlaylistId
+    const itemId = row.__clientItemId
+    if (playlistId == null || itemId == null) {
+      toast.error('移除失败', '缺少条目信息')
+      return
+    }
+    try {
+      await removeClientPlaylistItems(playlistId, [itemId])
+      // 从播放队列移除（如果是当前播放曲目）
+      player.removeTrack(row.__nodeId, row.id)
+      // 重新加载列表
+      await libraryStore.loadClientPlaylistTracks(playlistId)
+      // 刷新左侧树
+      await libraryStore.refreshAllPlaylists()
+      toast.success('已从列表移除')
+    } catch (e) {
+      const detail = e?.response?.data?.detail || e?.message || '未知错误'
+      toast.error('移除失败', detail, e)
+    }
+    return
+  }
+
+  // 节点播放列表：通过 track_id 删除
+  if (libraryStore.mode === 'node-playlist') {
+    const nodeId = libraryStore.currentNodeId
+    const playlistId = libraryStore.currentPlaylistId
+    if (nodeId == null || playlistId == null) {
+      toast.error('移除失败', '缺少播放列表信息')
+      return
+    }
+    const node = nodesStore.getNode(nodeId)
+    if (!node || !node.token) {
+      toast.error('移除失败', '节点离线')
+      return
+    }
+    try {
+      await removeTracksFromPlaylist(node, playlistId, [row.id])
+      // 从播放队列移除
+      player.removeTrack(row.__nodeId, row.id)
+      // 重新加载列表
+      await libraryStore.loadNodePlaylistTracks(nodeId, playlistId)
+      // 刷新左侧树
+      await libraryStore.refreshAllPlaylists()
+      toast.success('已从列表移除')
+    } catch (e) {
+      const detail = e?.response?.data?.detail || e?.message || '未知错误'
+      toast.error('移除失败', detail, e)
+    }
+  }
 }
 
 // ==================== 行内双击编辑 ====================
@@ -802,6 +950,30 @@ function onCoverError(e) {
           {{ selection.length > 1 ? `${selection.length} 首` : '单首' }}
         </span>
       </li>
+      <!-- 从播放列表移除（仅播放列表上下文） -->
+      <li
+        v-if="inPlaylistContext"
+        class="flex cursor-pointer items-center gap-2 rounded px-2.5 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        @click="removeFromList"
+      >
+        <X class="h-4 w-4" />
+        从列表移除
+        <span class="ml-auto text-[10px] text-muted-foreground/60">
+          不删除文件
+        </span>
+      </li>
+      <!-- 删除曲目文件（仅 admin + 在线节点） -->
+      <li
+        v-if="authStore.isAdmin && !contextMenu.row?.__nodeOffline"
+        class="flex cursor-pointer items-center gap-2 rounded px-2.5 py-2 text-sm text-destructive transition-colors hover:bg-destructive/10"
+        @click="deleteTrackFile"
+      >
+        <Trash2 class="h-4 w-4" />
+        删除曲目文件
+        <span class="ml-auto text-[10px] text-muted-foreground/60">
+          永久删除
+        </span>
+      </li>
     </ul>
 
     <!-- 加入到播放列表对话框 -->
@@ -817,6 +989,14 @@ function onCoverError(e) {
       :tracks="metadataPanelTracks"
       :readonly="metadataPanelReadonly"
       @updated="onMetadataUpdated"
+    />
+
+    <!-- 删除曲目文件对话框（1.2.1） -->
+    <DeleteTrackDialog
+      v-model:visible="deleteTrackDialogVisible"
+      :track="deleteTrackDialogRow"
+      @done="onDeleteTrackDone"
+      @cancel="onDeleteTrackCancel"
     />
   </div>
 </template>

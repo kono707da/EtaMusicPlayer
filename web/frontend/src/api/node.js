@@ -80,6 +80,20 @@ export async function getLyrics(node, trackId) {
   return resp.data
 }
 
+/**
+ * 1.2.1：删除曲目文件（节点侧软删除 + 物理删除）
+ * 提交后返回 NodeTask 信息（含 task_id），前端需轮询 GET /api/tasks/{task_id}
+ * 确认完成；完成后应调用客户端播放列表清理 API 移除引用。
+ * @param {Object} node 节点配置
+ * @param {Number} trackId 曲目 ID
+ * @returns {Promise<Object>} NodeTask
+ */
+export async function requestTrackDelete(node, trackId) {
+  const client = createNodeClient(node)
+  const resp = await client.post(`/api/tracks/${trackId}/delete`)
+  return resp.data
+}
+
 // ============ 播放列表 ============
 
 // 当前用户可见的播放列表

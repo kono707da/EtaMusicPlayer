@@ -1,4 +1,11 @@
-"""目录扫描 + mutagen 元数据提取 + 去重入库"""
+"""目录扫描 + mutagen 元数据提取 + 去重入库
+
+1.2.1 起：
+- 软删除路径重新出现时恢复原 Track 行（不新建行）
+- 扫描结束时清理磁盘缺失文件的记录（软删除）
+- 新增 commit 参数（默认 True 保持向后兼容）；由 TaskExecutor 调用时传 False，
+  让事务由 TaskExecutor._execute_task 统一管理
+"""
 from __future__ import annotations
 
 import os
@@ -24,7 +31,12 @@ from eta_node.models import (
     Track,
     WatchDir,
 )
-from eta_node.versioning import bump_version, ENTITY_TRACKS, ENTITY_PLAYLISTS
+from eta_node.versioning import (
+    bump_and_stamp,
+    bump_version,
+    ENTITY_PLAYLISTS,
+    ENTITY_TRACKS,
+)
 
 
 # 支持扫描的音频扩展名（小写，含点）
@@ -177,122 +189,246 @@ def _iter_audio_files(root: str, recursive: bool):
                 yield p
 
 
-def scan_directory(watch_dir: WatchDir, db: Session) -> tuple[int, int, int]:
-    """扫描单个监控目录，返回 (total_files, new_tracks, updated_tracks)
+def scan_directory(
+    watch_dir: WatchDir,
+    db: Session,
+    *,
+    commit: bool = True,
+) -> tuple[int, int, int, int, int]:
+    """扫描单个监控目录，返回 (total_files, new_tracks, updated_tracks, missing_tracks, restored_tracks)
 
-    mtime 未变则跳过；新入库的 Track 自动加入 "全部音乐" 系统播放列表。
+    1.2.1 起：
+    - mtime 未变跳过；但软删除记录（deleted_at IS NOT NULL）不参与 mtime 跳过
+    - 软删除路径重新出现时恢复原 Track 行，重新读元数据，重新加入系统播放列表
+    - 扫描结束前清理本次未发现的文件记录（软删除 Track + 删除 PlaylistItem）
+    - 新增 commit 参数（默认 True 保持向后兼容）；TaskExecutor 调用时应传 False
+    - 仅当本次扫描完整遍历成功时执行缺失清理；遍历异常时跳过清理
     """
     total_files = 0
     new_tracks = 0
     updated_tracks = 0
+    missing_tracks = 0
+    restored_tracks = 0
 
     system_playlist = _get_or_create_system_playlist(db)
 
     root = watch_dir.path
     root_path = Path(root)
 
-    for file_path in _iter_audio_files(root, watch_dir.recursive):
-        total_files += 1
-        try:
-            rel = file_path.relative_to(root_path)
-            rel_path = rel.as_posix()
-        except ValueError:
-            rel_path = file_path.name
+    # 收集本次扫描发现的相对路径，用于缺失清理
+    found_rel_paths: set[str] = set()
+    scan_completed = False
 
-        try:
-            stat = file_path.stat()
-        except OSError:
-            continue
+    try:
+        for file_path in _iter_audio_files(root, watch_dir.recursive):
+            total_files += 1
+            try:
+                rel = file_path.relative_to(root_path)
+                rel_path = rel.as_posix()
+            except ValueError:
+                rel_path = file_path.name
 
-        ext = file_path.suffix.lower().lstrip(".")
-        filename = file_path.name
-        abs_path = str(file_path)
-        file_size = stat.st_size
-        file_mtime = stat.st_mtime
+            found_rel_paths.add(rel_path)
 
-        # 查找现有记录
-        existing = (
-            db.query(Track)
-            .filter(Track.watch_dir_id == watch_dir.id, Track.rel_path == rel_path)
-            .one_or_none()
-        )
-
-        # mtime 未变跳过
-        if existing is not None and existing.file_mtime is not None:
-            if abs(existing.file_mtime - file_mtime) < 1e-3:
+            try:
+                stat = file_path.stat()
+            except OSError:
                 continue
 
-        meta = _extract_metadata(abs_path)
-        format_priority = get_format_priority(ext)
-        quality_score = compute_quality_score(
-            format_priority, meta.get("bitrate") or 0, meta.get("sample_rate") or 0
-        )
+            ext = file_path.suffix.lower().lstrip(".")
+            filename = file_path.name
+            abs_path = str(file_path)
+            file_size = stat.st_size
+            file_mtime = stat.st_mtime
 
-        if existing is None:
-            track = Track(
-                watch_dir_id=watch_dir.id,
-                rel_path=rel_path,
-                abs_path=abs_path,
-                filename=filename,
-                ext=ext,
-                title=meta["title"] or filename,
-                artist=meta["artist"],
-                album=meta["album"],
-                album_artist=meta["album_artist"],
-                track_no=meta["track_no"],
-                year=meta["year"],
-                genre=meta["genre"],
-                duration=meta["duration"],
-                bitrate=meta["bitrate"],
-                sample_rate=meta["sample_rate"],
-                channels=meta["channels"],
-                file_size=file_size,
-                file_mtime=file_mtime,
-                cover_embedded=meta["cover_embedded"],
-                lyrics_embedded=meta["lyrics_embedded"],
-                format_priority=format_priority,
-                quality_score=quality_score,
+            # 查找现有记录（包括软删除的，以便恢复）
+            existing = (
+                db.query(Track)
+                .filter(Track.watch_dir_id == watch_dir.id, Track.rel_path == rel_path)
+                .one_or_none()
             )
-            db.add(track)
-            db.flush()
-            # 加入系统播放列表
-            _add_to_system_playlist(db, system_playlist, track)
-            new_tracks += 1
-        else:
-            existing.abs_path = abs_path
-            existing.filename = filename
-            existing.ext = ext
-            existing.title = meta["title"] or existing.title
-            existing.artist = meta["artist"]
-            existing.album = meta["album"]
-            existing.album_artist = meta["album_artist"]
-            existing.track_no = meta["track_no"]
-            existing.year = meta["year"]
-            existing.genre = meta["genre"]
-            existing.duration = meta["duration"]
-            existing.bitrate = meta["bitrate"]
-            existing.sample_rate = meta["sample_rate"]
-            existing.channels = meta["channels"]
-            existing.file_size = file_size
-            existing.file_mtime = file_mtime
-            existing.cover_embedded = meta["cover_embedded"]
-            existing.lyrics_embedded = meta["lyrics_embedded"]
-            existing.format_priority = format_priority
-            existing.quality_score = quality_score
-            updated_tracks += 1
+
+            # 软删除路径重新出现 → 恢复（需求书 10.2）
+            if existing is not None and existing.deleted_at is not None:
+                # 恢复软删除记录，重新读元数据
+                meta = _extract_metadata(abs_path)
+                existing.deleted_at = None
+                existing.abs_path = abs_path
+                existing.filename = filename
+                existing.ext = ext
+                existing.title = meta["title"] or filename
+                _apply_metadata_to_track(existing, meta, ext, file_size, file_mtime)
+                # 重新加入系统播放列表
+                _add_to_system_playlist(db, system_playlist, existing)
+                restored_tracks += 1
+                continue
+
+            # mtime 未变跳过（仅对未软删除的现有记录）
+            if existing is not None and existing.file_mtime is not None:
+                if abs(existing.file_mtime - file_mtime) < 1e-3:
+                    continue
+
+            meta = _extract_metadata(abs_path)
+            format_priority = get_format_priority(ext)
+            quality_score = compute_quality_score(
+                format_priority, meta.get("bitrate") or 0, meta.get("sample_rate") or 0
+            )
+
+            if existing is None:
+                track = Track(
+                    watch_dir_id=watch_dir.id,
+                    rel_path=rel_path,
+                    abs_path=abs_path,
+                    filename=filename,
+                    ext=ext,
+                    title=meta["title"] or filename,
+                    artist=meta["artist"],
+                    album=meta["album"],
+                    album_artist=meta["album_artist"],
+                    track_no=meta["track_no"],
+                    year=meta["year"],
+                    genre=meta["genre"],
+                    duration=meta["duration"],
+                    bitrate=meta["bitrate"],
+                    sample_rate=meta["sample_rate"],
+                    channels=meta["channels"],
+                    file_size=file_size,
+                    file_mtime=file_mtime,
+                    cover_embedded=meta["cover_embedded"],
+                    lyrics_embedded=meta["lyrics_embedded"],
+                    format_priority=format_priority,
+                    quality_score=quality_score,
+                )
+                db.add(track)
+                db.flush()
+                # 加入系统播放列表
+                _add_to_system_playlist(db, system_playlist, track)
+                new_tracks += 1
+            else:
+                existing.abs_path = abs_path
+                existing.filename = filename
+                existing.ext = ext
+                existing.title = meta["title"] or existing.title
+                existing.artist = meta["artist"]
+                existing.album = meta["album"]
+                existing.album_artist = meta["album_artist"]
+                existing.track_no = meta["track_no"]
+                existing.year = meta["year"]
+                existing.genre = meta["genre"]
+                existing.duration = meta["duration"]
+                existing.bitrate = meta["bitrate"]
+                existing.sample_rate = meta["sample_rate"]
+                existing.channels = meta["channels"]
+                existing.file_size = file_size
+                existing.file_mtime = file_mtime
+                existing.cover_embedded = meta["cover_embedded"]
+                existing.lyrics_embedded = meta["lyrics_embedded"]
+                existing.format_priority = format_priority
+                existing.quality_score = quality_score
+                updated_tracks += 1
+
+        scan_completed = True
+    except Exception:
+        # 遍历异常：不执行缺失清理，但已经入库的更改保留由调用方决定提交或回滚
+        # 这里不吞异常，向上抛出
+        raise
+
+    # 缺失清理：仅当本次扫描完整遍历成功时执行（需求书 10.1）
+    if scan_completed:
+        missing_tracks = _cleanup_missing_tracks(db, watch_dir, found_rel_paths)
 
     watch_dir.last_scanned_at = datetime.utcnow()
     # 数据变更在同一事务内递增版本号，供访问端增量同步
-    if new_tracks > 0 or updated_tracks > 0:
+    if new_tracks > 0 or updated_tracks > 0 or missing_tracks > 0 or restored_tracks > 0:
+        # new_tracks/restored/missing 的对象已在 session 内，
+        # bump_version 会自动给 session.new 和 session.dirty 中对应模型的 version_stamp 打戳
         bump_version(db, ENTITY_TRACKS)
-    if new_tracks > 0:  # 新曲目被加入系统播放列表，播放列表内容也变更
+    if new_tracks > 0 or restored_tracks > 0 or missing_tracks > 0:
+        # 新曲目加入系统播放列表 / 软删除清理 PlaylistItem / 恢复重新加入系统列表
         bump_version(db, ENTITY_PLAYLISTS)
-    db.commit()
-    return total_files, new_tracks, updated_tracks
+
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return total_files, new_tracks, updated_tracks, missing_tracks, restored_tracks
+
+
+def _apply_metadata_to_track(
+    track: Track, meta: dict, ext: str, file_size: int, file_mtime: float
+) -> None:
+    """把元数据字典应用到 Track 对象的属性（恢复软删除时复用）"""
+    track.title = meta["title"] or track.filename
+    track.artist = meta["artist"]
+    track.album = meta["album"]
+    track.album_artist = meta["album_artist"]
+    track.track_no = meta["track_no"]
+    track.year = meta["year"]
+    track.genre = meta["genre"]
+    track.duration = meta["duration"]
+    track.bitrate = meta["bitrate"]
+    track.sample_rate = meta["sample_rate"]
+    track.channels = meta["channels"]
+    track.file_size = file_size
+    track.file_mtime = file_mtime
+    track.cover_embedded = meta["cover_embedded"]
+    track.lyrics_embedded = meta["lyrics_embedded"]
+    track.format_priority = get_format_priority(ext)
+    track.quality_score = compute_quality_score(
+        get_format_priority(ext), meta.get("bitrate") or 0, meta.get("sample_rate") or 0
+    )
+
+
+def _cleanup_missing_tracks(db: Session, watch_dir: WatchDir, found_rel_paths: set[str]) -> int:
+    """清理本次扫描未发现的文件记录（软删除 Track + 删除 PlaylistItem）
+
+    需求书 10.1：仅清理未软删除的曲目；返回清理数量。
+    调用方负责最终 commit。
+    """
+    existing_tracks = (
+        db.query(Track)
+        .filter(
+            Track.watch_dir_id == watch_dir.id,
+            Track.deleted_at.is_(None),
+        )
+        .all()
+    )
+    missing_count = 0
+    now = datetime.utcnow()
+    for t in existing_tracks:
+        if t.rel_path in found_rel_paths:
+            continue
+        # 文件在磁盘上不存在 → 软删除 Track + 删除 PlaylistItem
+        t.deleted_at = now
+        # 删除所有 PlaylistItem 引用
+        items = (
+            db.query(PlaylistItem)
+            .filter(PlaylistItem.track_id == t.id)
+            .all()
+        )
+        for it in items:
+            db.delete(it)
+        # 受影响的 Playlist 触发 updated_at 自动更新（onupdate）
+        # 这里显式 touch，确保即使 SQLAlchemy 不触发 onupdate 也会更新
+        affected_pl_ids = {it.playlist_id for it in items}
+        if affected_pl_ids:
+            affected_pls = (
+                db.query(Playlist)
+                .filter(Playlist.id.in_(affected_pl_ids))
+                .all()
+            )
+            for pl in affected_pls:
+                pl.updated_at = now
+        missing_count += 1
+    return missing_count
 
 
 def _get_or_create_system_playlist(db: Session) -> Playlist:
-    """获取或创建 "全部音乐" 系统播放列表"""
+    """获取或创建 "全部音乐" 系统播放列表
+
+    1.2.1 起：用 flush 替代 commit，由调用方统一管理事务（与 scan_directory 的
+    commit 参数配合）。
+    """
     pl = (
         db.query(Playlist)
         .filter(Playlist.is_system.is_(True), Playlist.name == SYSTEM_PLAYLIST_ALL)
@@ -312,12 +448,13 @@ def _get_or_create_system_playlist(db: Session) -> Playlist:
         )
         db.add(pl)
         bump_version(db, ENTITY_PLAYLISTS)
-        db.commit()
+        db.flush()
         db.refresh(pl)
     return pl
 
 
 def _get_or_create_inbox_playlist(db: Session) -> Optional[Playlist]:
+    """获取或创建 "收集箱" 系统播放列表（同样用 flush）"""
     pl = (
         db.query(Playlist)
         .filter(Playlist.is_system.is_(True), Playlist.name == SYSTEM_PLAYLIST_INBOX)
@@ -337,7 +474,7 @@ def _get_or_create_inbox_playlist(db: Session) -> Optional[Playlist]:
         )
         db.add(pl)
         bump_version(db, ENTITY_PLAYLISTS)
-        db.commit()
+        db.flush()
         db.refresh(pl)
     return pl
 
@@ -374,6 +511,8 @@ def run_scan(scan_task_id: int, watch_dir_id: Optional[int] = None) -> None:
     """同步执行扫描任务
 
     watch_dir_id 为 None 时扫描所有启用的监控目录。
+
+    1.2.1 起：scan_directory 默认 commit=True，兼容此入口的旧调用约定。
     """
     db = SessionLocal()
     try:
@@ -393,11 +532,15 @@ def run_scan(scan_task_id: int, watch_dir_id: Optional[int] = None) -> None:
             total_all = 0
             new_all = 0
             updated_all = 0
+            missing_all = 0
+            restored_all = 0
             for wd in watch_dirs:
-                t, n, u = scan_directory(wd, db)
+                t, n, u, m, r = scan_directory(wd, db)
                 total_all += t
                 new_all += n
                 updated_all += u
+                missing_all += m
+                restored_all += r
                 task.total_files = total_all
                 task.processed_files = total_all
                 task.new_tracks = new_all
