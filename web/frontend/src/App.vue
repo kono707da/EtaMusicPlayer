@@ -126,7 +126,7 @@ async function refreshRemoteTokens() {
       remoteNodes.map(async (row) => {
         const storeNodeId = `remote-${row.id}`
         try {
-          // 先做版本校验
+          // 先做版本校验（仅拦截真正不兼容；网络错误继续尝试登录）
           let existing = nodesStore.nodes.find((n) => n.baseUrl === row.url)
           if (!existing) {
             nodesStore.addNode({
@@ -141,17 +141,21 @@ async function refreshRemoteTokens() {
             existing = nodesStore.getNode(storeNodeId)
           }
 
-          const compat = await nodesStore.checkNodeVersion(storeNodeId)
-          if (compat.result === 'incompatible') {
-            // 版本不兼容：清除 token，不使用该节点
-            if (existing && existing.token) {
-              nodesStore.updateNode(storeNodeId, { token: '', userInfo: null })
+          try {
+            const compat = await nodesStore.checkNodeVersion(storeNodeId)
+            if (compat.result === 'incompatible') {
+              // 版本不兼容：清除 token，不使用该节点
+              if (existing && existing.token) {
+                nodesStore.updateNode(storeNodeId, { token: '', userInfo: null })
+              }
+              console.warn(`节点 ${row.name} 版本不兼容：${compat.reason}`)
+              return
             }
-            console.warn(`节点 ${row.name} 版本不兼容：${compat.reason}`)
-            return
+          } catch (versionErr) {
+            // 版本校验网络失败（节点未启动等），继续尝试登录以判定最终状态
           }
 
-          // 版本兼容，继续登录
+          // 版本兼容或版本校验不可达，继续登录
           const result = await loginRemoteNode(row.id)
           nodesStore.updateNode(storeNodeId, {
             token: result.access_token,
@@ -168,7 +172,7 @@ async function refreshRemoteTokens() {
               nodesStore.updateNode(existing.id, { token: '', userInfo: null })
             }
           }
-          // 其他错误（网络问题等）保留旧 token
+          // 其他错误（网络问题等，含节点离线时 login 返回 502）保留旧 token
         }
       })
     )
