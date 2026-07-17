@@ -522,6 +522,47 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
+   * 1.2.1：按当前 mode 重新加载视图（删除曲目后调用）
+   * - 'all': loadAllTracks
+   * - 'node-all': loadNodeAllTracks(currentNodeId)
+   * - 'node-playlist': loadNodePlaylistTracks(currentNodeId, currentPlaylistId)
+   * - 'client-playlist': loadClientPlaylistTracks(currentPlaylistId)
+   * - 'search': 用 keyword 重新搜索
+   * - 'empty': no-op
+   * 删除失败时不调用，避免无谓刷新。
+   */
+  async function reloadCurrentView() {
+    switch (mode.value) {
+      case 'all':
+        await loadAllTracks()
+        break
+      case 'node-all':
+        if (currentNodeId.value != null) {
+          await loadNodeAllTracks(currentNodeId.value)
+        }
+        break
+      case 'node-playlist':
+        if (currentNodeId.value != null && currentPlaylistId.value != null) {
+          await loadNodePlaylistTracks(currentNodeId.value, currentPlaylistId.value)
+        }
+        break
+      case 'client-playlist':
+        if (currentPlaylistId.value != null) {
+          await loadClientPlaylistTracks(currentPlaylistId.value)
+        }
+        break
+      case 'search':
+        if (keyword.value) {
+          await globalSearch(keyword.value)
+        }
+        break
+      case 'empty':
+      default:
+        break
+    }
+  }
+
+  /**
    * 监听节点登录/登出/删除事件
    * 1. 触发后台增量同步（在线节点缓存刷新）
    * 2. 刷新所有节点播放列表（在线直调+离线读缓存）
@@ -568,6 +609,7 @@ export const useLibraryStore = defineStore('library', () => {
     loadClientPlaylistTracks,
     globalSearch,
     setPage,
-    resetPaging
+    resetPaging,
+    reloadCurrentView
   }
 })

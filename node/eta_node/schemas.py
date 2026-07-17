@@ -188,6 +188,20 @@ class NodeTaskList(BaseModel):
     items: list[NodeTaskOut]
 
 
+# ----------------------------- Track Delete -----------------------------
+class TrackDeleteResult(BaseModel):
+    """track_delete 任务结果（1.2.1）
+
+    作为 NodeTask.result 字段返回；前端轮询任务完成后解析此结构。
+    """
+    track_id: int
+    file_deleted: bool = False
+    file_missing: bool = False
+    removed_node_playlist_items: int = 0
+    relative_path: Optional[str] = None
+    warning: Optional[str] = None
+
+
 # ----------------------------- Users -----------------------------
 class UserCreate(BaseModel):
     username: str

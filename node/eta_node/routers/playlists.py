@@ -25,35 +25,59 @@ from eta_node.schemas import (
     ReorderRequest,
     TrackOut,
 )
-from eta_node.versioning import bump_version, ENTITY_PLAYLISTS
+from eta_node.versioning import bump_and_stamp, bump_version, ENTITY_PLAYLISTS
 
 
 router = APIRouter(prefix="/api/playlists", tags=["playlists"])
 
 
 def _visible_playlists(db: Session, user: User) -> list[Playlist]:
-    """返回当前用户可见的播放列表"""
+    """返回当前用户可见的播放列表（排除软删除）"""
     ids: set[int] = set()
-    owned = db.query(Playlist.id).filter(Playlist.owner_id == user.id).all()
+    owned = (
+        db.query(Playlist.id)
+        .filter(Playlist.owner_id == user.id, Playlist.deleted_at.is_(None))
+        .all()
+    )
     for (pid,) in owned:
         ids.add(pid)
     granted = (
         db.query(PlaylistPermission.playlist_id)
-        .filter(PlaylistPermission.user_id == user.id)
+        .join(Playlist, PlaylistPermission.playlist_id == Playlist.id)
+        .filter(
+            PlaylistPermission.user_id == user.id,
+            Playlist.deleted_at.is_(None),
+        )
         .all()
     )
     for (pid,) in granted:
         ids.add(pid)
-    system = db.query(Playlist.id).filter(Playlist.is_system.is_(True)).all()
+    system = (
+        db.query(Playlist.id)
+        .filter(Playlist.is_system.is_(True), Playlist.deleted_at.is_(None))
+        .all()
+    )
     for (pid,) in system:
         ids.add(pid)
     if not ids:
         return []
-    return db.query(Playlist).filter(Playlist.id.in_(ids)).order_by(Playlist.name).all()
+    return (
+        db.query(Playlist)
+        .filter(Playlist.id.in_(ids), Playlist.deleted_at.is_(None))
+        .order_by(Playlist.name)
+        .all()
+    )
 
 
-def _can_access_playlist(db: Session, playlist: Playlist, user: User) -> bool:
-    """是否可访问（查看/操作）该播放列表"""
+def _can_view_playlist(db: Session, playlist: Playlist, user: User) -> bool:
+    """是否可查看该播放列表
+
+    - admin 全可见（仅未软删除）
+    - 自定义列表：所有者或被授权用户
+    - 系统列表：所有登录用户可见
+    """
+    if playlist.deleted_at is not None:
+        return False
     if user.is_admin:
         return True
     if playlist.owner_id == user.id:
@@ -69,6 +93,40 @@ def _can_access_playlist(db: Session, playlist: Playlist, user: User) -> bool:
         .first()
     )
     return exists is not None
+
+
+def _can_edit_playlist(db: Session, playlist: Playlist, user: User) -> bool:
+    """是否可修改该播放列表成员
+
+    - admin 全可改
+    - 自定义列表：所有者或被授权用户（本期保持与查看相同语义）
+    - 系统列表：仅 admin 可改成员（普通用户不可增删曲目、不可重排序）
+    - 软删除列表：任何人都不可编辑
+    """
+    if playlist.deleted_at is not None:
+        return False
+    if user.is_admin:
+        return True
+    if playlist.is_system:
+        # 普通用户不可改系统列表成员
+        return False
+    if playlist.owner_id == user.id:
+        return True
+    exists = (
+        db.query(PlaylistPermission.id)
+        .filter(
+            PlaylistPermission.playlist_id == playlist.id,
+            PlaylistPermission.user_id == user.id,
+        )
+        .first()
+    )
+    return exists is not None
+
+
+# 旧名保留以向后兼容（其它模块可能引用），实际语义等于 _can_view_playlist
+def _can_access_playlist(db: Session, playlist: Playlist, user: User) -> bool:
+    """已废弃：使用 _can_view_playlist / _can_edit_playlist 拆分"""
+    return _can_view_playlist(db, playlist, user)
 
 
 def _playlist_to_out(db: Session, p: Playlist) -> PlaylistOut:
@@ -121,11 +179,11 @@ def get_playlist(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_dependency),
 ) -> PlaylistDetail:
-    """播放列表详情含曲目"""
+    """播放列表详情含曲目（排除软删除曲目）"""
     pl = db.get(Playlist, playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
-    if not _can_access_playlist(db, pl, user):
+    if not _can_view_playlist(db, pl, user):
         raise HTTPException(status_code=403, detail="无权访问该播放列表")
 
     items = (
@@ -137,13 +195,18 @@ def get_playlist(
     item_outs = []
     for it in items:
         track = db.get(Track, it.track_id)
+        # 跳过软删除曲目的 track 信息（保留 PlaylistItem 行，但 track=None 让前端隐藏）
+        if track is not None and track.deleted_at is not None:
+            track_out = None
+        else:
+            track_out = TrackOut.model_validate(track) if track else None
         item_outs.append(
             PlaylistItemOut(
                 id=it.id,
                 track_id=it.track_id,
                 position=it.position,
                 added_at=it.added_at,
-                track=TrackOut.model_validate(track) if track else None,
+                track=track_out,
             )
         )
     out = _playlist_to_out(db, pl)
@@ -159,12 +222,15 @@ def update_playlist(
 ) -> PlaylistOut:
     """更新播放列表（系统列表只改描述）"""
     pl = db.get(Playlist, playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
-    if not _can_access_playlist(db, pl, user):
+    # 修改元信息（名称/描述）使用查看权限即可（向后兼容），但软删除列表不可改
+    if not _can_view_playlist(db, pl, user):
         raise HTTPException(status_code=403, detail="无权操作")
     if pl.is_system:
-        # 系统列表只允许改描述
+        # 系统列表只允许 admin 改描述
+        if not user.is_admin and payload.description is not None:
+            raise HTTPException(status_code=403, detail="系统列表仅管理员可改描述")
         if payload.description is not None:
             pl.description = payload.description
         if payload.name is not None and payload.name != pl.name:
@@ -174,7 +240,7 @@ def update_playlist(
             pl.name = payload.name
         if payload.description is not None:
             pl.description = payload.description
-    bump_version(db, ENTITY_PLAYLISTS)
+    bump_and_stamp(db, ENTITY_PLAYLISTS, [pl])
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)
@@ -186,16 +252,16 @@ def delete_playlist(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_dependency),
 ):
-    """删除播放列表（系统列表禁止删除）"""
+    """删除播放列表（系统列表禁止删除，需可编辑权限）"""
     pl = db.get(Playlist, playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
     if pl.is_system:
         raise HTTPException(status_code=400, detail="系统列表不可删除")
-    if not _can_access_playlist(db, pl, user):
+    if not _can_edit_playlist(db, pl, user):
         raise HTTPException(status_code=403, detail="无权操作")
     pl.deleted_at = datetime.utcnow()
-    bump_version(db, ENTITY_PLAYLISTS)
+    bump_and_stamp(db, ENTITY_PLAYLISTS, [pl])
     db.commit()
 
 
@@ -206,11 +272,11 @@ def add_tracks(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_dependency),
 ) -> PlaylistOut:
-    """批量添加曲目到播放列表"""
+    """批量添加曲目到播放列表（拒绝已软删除曲目）"""
     pl = db.get(Playlist, playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
-    if not _can_access_playlist(db, pl, user):
+    if not _can_edit_playlist(db, pl, user):
         raise HTTPException(status_code=403, detail="无权操作")
 
     # 当前最大 position
@@ -229,11 +295,14 @@ def add_tracks(
         .all()
     }
     added = 0
+    skipped_deleted = 0
     for tid in payload.track_ids:
         if tid in existing_ids:
             continue
         track = db.get(Track, tid)
-        if track is None:
+        # 拒绝添加软删除曲目
+        if track is None or track.deleted_at is not None:
+            skipped_deleted += 1
             continue
         item = PlaylistItem(
             playlist_id=playlist_id,
@@ -244,7 +313,8 @@ def add_tracks(
         next_pos += 1
         added += 1
     if added > 0:
-        bump_version(db, ENTITY_PLAYLISTS)
+        pl.updated_at = datetime.utcnow()
+        bump_and_stamp(db, ENTITY_PLAYLISTS, [pl])
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)
@@ -257,11 +327,11 @@ def remove_tracks(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_dependency),
 ) -> PlaylistOut:
-    """批量移除曲目"""
+    """批量移除曲目（需可编辑权限）"""
     pl = db.get(Playlist, playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
-    if not _can_access_playlist(db, pl, user):
+    if not _can_edit_playlist(db, pl, user):
         raise HTTPException(status_code=403, detail="无权操作")
 
     db.query(PlaylistItem).filter(
@@ -270,7 +340,7 @@ def remove_tracks(
     ).delete(synchronize_session=False)
     # 播放列表内容变更，需手动 touch pl 对象使其进入 dirty 并被 bump_version 打戳
     pl.updated_at = datetime.utcnow()
-    bump_version(db, ENTITY_PLAYLISTS)
+    bump_and_stamp(db, ENTITY_PLAYLISTS, [pl])
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)
@@ -283,11 +353,11 @@ def reorder_tracks(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user_dependency),
 ) -> PlaylistOut:
-    """调整曲目顺序"""
+    """调整曲目顺序（需可编辑权限）"""
     pl = db.get(Playlist, playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
-    if not _can_access_playlist(db, pl, user):
+    if not _can_edit_playlist(db, pl, user):
         raise HTTPException(status_code=403, detail="无权操作")
 
     target = (
@@ -315,7 +385,7 @@ def reorder_tracks(
         it.position = idx
     # 播放列表内容变更，手动 touch pl 使其被 bump_version 打戳
     pl.updated_at = datetime.utcnow()
-    bump_version(db, ENTITY_PLAYLISTS)
+    bump_and_stamp(db, ENTITY_PLAYLISTS, [pl])
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(db, pl)

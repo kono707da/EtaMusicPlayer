@@ -75,6 +75,17 @@ class ItemsRemoveBatch(BaseModel):
     item_ids: list[int]
 
 
+class RemoveByTrackRequest(BaseModel):
+    """按 (node_id, track_id) 删除客户端播放列表条目（1.2.1）
+
+    用于节点曲目被删除后，访问端清理所有引用该曲目的客户端播放列表项。
+    幂等：不存在时返回 removed=0。
+    """
+
+    node_id: str
+    track_id: int
+
+
 class ReorderRequest(BaseModel):
     item_id: int
     new_position: int
@@ -230,6 +241,47 @@ def remove_items(
         i.position = idx
     db.commit()
     return {"ok": True, "removed": len(ids_to_remove)}
+
+
+@router.delete("/items/by-track")
+def remove_items_by_track(
+    payload: RemoveByTrackRequest, db: Session = Depends(get_db)
+) -> dict:
+    """按 (node_id, track_id) 跨所有客户端播放列表删除条目（1.2.1）
+
+    用于节点曲目被软删除/文件删除后，访问端清理全局引用。
+    幂等：不存在匹配时返回 removed=0。
+    删除后对受影响的每个播放列表按 position 重排，保持顺序连续。
+    """
+    items = (
+        db.query(ClientPlaylistItem)
+        .filter(
+            ClientPlaylistItem.node_id == payload.node_id,
+            ClientPlaylistItem.track_id == payload.track_id,
+        )
+        .all()
+    )
+    affected_playlist_ids = {it.playlist_id for it in items}
+    for it in items:
+        db.delete(it)
+    db.flush()
+    # 对受影响的播放列表重排 position
+    for pl_id in affected_playlist_ids:
+        remaining = (
+            db.query(ClientPlaylistItem)
+            .filter(ClientPlaylistItem.playlist_id == pl_id)
+            .order_by(ClientPlaylistItem.position)
+            .all()
+        )
+        for idx, it in enumerate(remaining):
+            it.position = idx
+    db.commit()
+    if items:
+        logger.info(
+            "按 (node=%s, track=%d) 清理客户端播放列表条目: %d 条, 涉及 %d 个列表",
+            payload.node_id, payload.track_id, len(items), len(affected_playlist_ids),
+        )
+    return {"ok": True, "removed": len(items)}
 
 
 @router.put("/{playlist_id}/reorder")

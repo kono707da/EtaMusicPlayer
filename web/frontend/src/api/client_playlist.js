@@ -64,6 +64,20 @@ export async function removeClientPlaylistItems(playlistId, itemIds) {
   return resp.data
 }
 
+/**
+ * 1.2.1：按 (node_id, track_id) 跨所有客户端播放列表删除条目
+ * 在节点曲目删除任务完成后调用，清理全局引用。幂等。
+ * @param {String} nodeId 客户端格式节点 ID（如 "remote-1"）
+ * @param {Number} trackId 曲目 ID
+ * @returns {Promise<Object>} { ok: true, removed: N }
+ */
+export async function removeClientPlaylistTrackReferences(nodeId, trackId) {
+  const resp = await client.delete('/api/client-playlists/items/by-track', {
+    data: { node_id: nodeId, track_id: trackId }
+  })
+  return resp.data
+}
+
 // 调整曲目顺序 { item_id, new_position }
 export async function reorderClientPlaylistItem(playlistId, itemId, newPosition) {
   const resp = await client.put(`/api/client-playlists/${playlistId}/reorder`, {

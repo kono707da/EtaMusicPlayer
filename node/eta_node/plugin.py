@@ -57,6 +57,23 @@ PLUGIN_META = {
 def bootstrap() -> None:
     """节点启动初始化：建表、创建 admin 用户、系统播放列表、默认去重配置"""
     init_db()
+    # 0. 1.2.1 迁移：为旧库补充 tracks.file_hash / file_hash_mtime 列（幂等）
+    try:
+        from eta_node.database import engine as _engine
+        import sys
+        import os
+        # 优先用同目录的 migrate_db_121.py 模块
+        _node_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _node_dir not in sys.path:
+            sys.path.insert(0, _node_dir)
+        try:
+            import migrate_db_121
+            migrate_db_121.ensure_columns(_engine)
+        except Exception as _e:
+            logger.warning("migrate_db_121 调用失败（可忽略，新库本就有列）: %s", _e)
+    except Exception:
+        pass
+
     db = SessionLocal()
     try:
         # 0. 初始化数据版本号记录（首次升级到 1.2.0 时创建）

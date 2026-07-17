@@ -497,8 +497,14 @@ def batch_preview(db: Session, track_ids: list[int]) -> dict:
 
     格式: {field: {value: "xxx" | null, is_uniform: bool}}
     null 表示多值不统一。
+
+    1.2.1：排除软删除曲目（Track.deleted_at IS NOT NULL）。
     """
-    tracks = db.query(Track).filter(Track.id.in_(track_ids)).all()
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(track_ids), Track.deleted_at.is_(None))
+        .all()
+    )
     overview: dict = {}
 
     # 1. DB 字段直接从数据库读
@@ -710,11 +716,18 @@ def _write_mp4(mf: MP4, field: str, value: str) -> None:
 def batch_update_field(
     db: Session, track_ids: list[int], field: str, value: Optional[str]
 ) -> int:
-    """批量写入某字段到 DB + 用 mutagen 回写文件标签。返回更新条数。"""
+    """批量写入某字段到 DB + 用 mutagen 回写文件标签。返回更新条数。
+
+    1.2.1：排除软删除曲目。
+    """
     if field not in EDITABLE_FIELDS:
         raise ValueError(f"不支持的字段: {field}")
 
-    tracks = db.query(Track).filter(Track.id.in_(track_ids)).all()
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(track_ids), Track.deleted_at.is_(None))
+        .all()
+    )
     count = 0
     for t in tracks:
         if field in DB_FIELDS:
@@ -746,6 +759,8 @@ def batch_update_multi_fields(
 
     updates: {field: value} 字典，field 必须在 EDITABLE_FIELDS 中。
     返回 {"updated": int, "fields": [...], "skipped": [{"field": ..., "reason": ...}]}
+
+    1.2.1：排除软删除曲目。
     """
     skipped: list[dict] = []
     valid_fields: dict[str, Optional[str]] = {}
@@ -758,7 +773,11 @@ def batch_update_multi_fields(
     if not valid_fields:
         return {"updated": 0, "fields": [], "skipped": skipped}
 
-    tracks = db.query(Track).filter(Track.id.in_(track_ids)).all()
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(track_ids), Track.deleted_at.is_(None))
+        .all()
+    )
     count = 0
     for t in tracks:
         for field, value in valid_fields.items():
@@ -798,8 +817,15 @@ def batch_update_multi_fields(
 def rename_preview(
     db: Session, track_ids: list[int], template: str, exceptions: list[int]
 ) -> list[dict]:
-    """预览重命名。exceptions 内的 track_id 跳过。返回 [{track_id, old_path, new_path}]"""
-    tracks = db.query(Track).filter(Track.id.in_(track_ids)).all()
+    """预览重命名。exceptions 内的 track_id 跳过。返回 [{track_id, old_path, new_path}]
+
+    1.2.1：排除软删除曲目。
+    """
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(track_ids), Track.deleted_at.is_(None))
+        .all()
+    )
     items: list[dict] = []
     for t in tracks:
         if t.id in exceptions:
@@ -818,8 +844,15 @@ def rename_preview(
 def rename_execute(
     db: Session, track_ids: list[int], template: str, exceptions: list[int]
 ) -> dict:
-    """实际移动文件 + 更新 abs_path/rel_path/filename，事务保护，失败回滚"""
-    tracks = db.query(Track).filter(Track.id.in_(track_ids)).all()
+    """实际移动文件 + 更新 abs_path/rel_path/filename，事务保护，失败回滚
+
+    1.2.1：排除软删除曲目。
+    """
+    tracks = (
+        db.query(Track)
+        .filter(Track.id.in_(track_ids), Track.deleted_at.is_(None))
+        .all()
+    )
     success: list[int] = []
     failed: list[dict] = []
 

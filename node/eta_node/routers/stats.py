@@ -76,7 +76,8 @@ def record_play_event(
         raise HTTPException(status_code=400, detail="event_type 必须是 play/skip/complete")
 
     track = db.get(Track, payload.track_id)
-    if track is None:
+    # 1.2.1：软删除曲目不可上报播放事件
+    if track is None or track.deleted_at is not None:
         raise HTTPException(status_code=404, detail="曲目不存在")
 
     now = datetime.utcnow()
@@ -157,23 +158,45 @@ def get_dashboard(
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = now - timedelta(days=7)
 
+    # 1.2.1：所有统计查询排除软删除曲目
     # 总曲目数
-    total_tracks = db.query(func.count(Track.id)).scalar() or 0
+    total_tracks = (
+        db.query(func.count(Track.id))
+        .filter(Track.deleted_at.is_(None))
+        .scalar() or 0
+    )
 
-    # 总播放/跳过/完成数
-    total_play = db.query(func.sum(TrackStats.total_play_count)).scalar() or 0
-    total_skip = db.query(func.sum(TrackStats.total_skip_count)).scalar() or 0
-    total_complete = db.query(func.sum(TrackStats.total_complete_count)).scalar() or 0
+    # 总播放/跳过/完成数：仅统计未软删除曲目的统计行
+    total_play = (
+        db.query(func.sum(TrackStats.total_play_count))
+        .join(Track, TrackStats.track_id == Track.id)
+        .filter(Track.deleted_at.is_(None))
+        .scalar() or 0
+    )
+    total_skip = (
+        db.query(func.sum(TrackStats.total_skip_count))
+        .join(Track, TrackStats.track_id == Track.id)
+        .filter(Track.deleted_at.is_(None))
+        .scalar() or 0
+    )
+    total_complete = (
+        db.query(func.sum(TrackStats.total_complete_count))
+        .join(Track, TrackStats.track_id == Track.id)
+        .filter(Track.deleted_at.is_(None))
+        .scalar() or 0
+    )
 
-    # 今日/本周入库
+    # 今日/本周入库：基于未软删除曲子的 TrackStats
     imported_today = (
         db.query(func.count(TrackStats.track_id))
-        .filter(TrackStats.imported_at >= today_start)
+        .join(Track, TrackStats.track_id == Track.id)
+        .filter(TrackStats.imported_at >= today_start, Track.deleted_at.is_(None))
         .scalar() or 0
     )
     imported_this_week = (
         db.query(func.count(TrackStats.track_id))
-        .filter(TrackStats.imported_at >= week_ago)
+        .join(Track, TrackStats.track_id == Track.id)
+        .filter(TrackStats.imported_at >= week_ago, Track.deleted_at.is_(None))
         .scalar() or 0
     )
 
@@ -187,7 +210,7 @@ def get_dashboard(
             Track.artist,
         )
         .join(Track, TrackStats.track_id == Track.id)
-        .filter(TrackStats.total_play_count > 0)
+        .filter(TrackStats.total_play_count > 0, Track.deleted_at.is_(None))
         .order_by(TrackStats.total_play_count.desc())
         .limit(10)
         .all()
@@ -203,7 +226,7 @@ def get_dashboard(
         for r in top_tracks_q
     ]
 
-    # 最近播放记录（10条）
+    # 最近播放记录（10条）：排除软删除曲目
     recent_plays_q = (
         db.query(
             PlayHistory.played_at,
@@ -214,6 +237,7 @@ def get_dashboard(
         )
         .join(Track, PlayHistory.track_id == Track.id)
         .join(User, PlayHistory.user_id == User.id)
+        .filter(Track.deleted_at.is_(None))
         .order_by(PlayHistory.played_at.desc())
         .limit(10)
         .all()

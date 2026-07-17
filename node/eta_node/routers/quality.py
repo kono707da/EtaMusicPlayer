@@ -22,7 +22,7 @@ def detect_upgrades(
 ) -> list[UpgradeCandidate]:
     """检测该播放列表内的音质升级候选"""
     pl = db.get(Playlist, playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
     raw = find_upgrades_in_playlist(db, playlist_id)
     result: list[UpgradeCandidate] = []
@@ -46,7 +46,7 @@ def replace_track(
 ) -> dict:
     """执行替换：将播放列表中 old_track_id 指向 new_track_id"""
     pl = db.get(Playlist, payload.playlist_id)
-    if pl is None:
+    if pl is None or pl.deleted_at is not None:
         raise HTTPException(status_code=404, detail="播放列表不存在")
     ok = replace_in_playlist(db, payload.playlist_id, payload.old_track_id, payload.new_track_id)
     if not ok:
