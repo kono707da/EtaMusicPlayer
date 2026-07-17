@@ -763,6 +763,45 @@ if deleted_track_ids:
 
 升级到 1.2.1 后，已有曲目的 `file_hash` 仍为 NULL。需手动触发一次去重检测或扫描以回填 SHA-256。可通过节点管理页面触发扫描，或在去重设置中启用 `file_hash` 字段后运行检测。
 
+### 21.7 系统日志与错误处理（符合项目规则）
+
+> 对应规则：所有项目都应该拥有系统日志功能；前端报错提示要说明错误原因（15字以内）；后台日志要有详尽的错误日志记录。
+
+#### 21.7.1 后台日志
+
+- **节点侧（eta_node）**：
+  - `_handle_track_delete` 通过 `write_audit_log` 写入 `audit_logs` 表，记录 `action="track_delete"`、`target_type="track"`、`target_id`、`task_id`、`detail`（含 file_deleted/file_missing/removed_node_playlist_items）
+  - `task_executor.py` 在任务失败时 `logger.exception` 记录完整堆栈到日志文件
+  - `_handle_scan` 的 missing/recovered 统计通过任务 result 返回，由 `tasks.py` 路由记录到任务结果
+- **访问端（eta_web）**：
+  - `client_playlists/routers.py` 的 `remove_items_by_track` 使用 `logger.info` 记录清理数量与涉及的播放列表数
+  - `node_cache/sync_service.py` 的 `_apply_track_changes` 使用 `logger.info` 记录软删除曲目数与清理的客户端引用数
+  - 日志文件 `web/backend/data/logs/eta_web.log` 由 `TimedRotatingFileHandler` 按天轮转，保留 30 天
+- **日志查看**：`GET /api/system/logs?lines=N&level=ERROR` 供前端设置页面读取后端日志
+
+#### 21.7.2 前端报错提示（15字以内，明确原因）
+
+`DeleteTrackDialog.vue` 与 `TrackTable.vue` 的错误提示遵循"15字以内 + 明确原因"规则：
+
+| 场景 | 报错文本（title） | 字数 | 说明 |
+|---|---|---|---|
+| 缺少曲目或节点 | `缺少曲目或节点信息` | 9 | 明确缺失对象（DeleteTrackDialog） |
+| 节点离线（删除） | `节点离线无法删除` | 8 | 明确离线状态（TrackTable.deleteTrackFile） |
+| 权限不足（删除） | `需要管理员权限` | 7 | 明确权限要求（TrackTable.deleteTrackFile） |
+| 移除失败（客户端列表） | `移除失败` + detail | — | detail 来自后端具体原因 |
+| 移除失败（节点列表） | `移除失败` + detail | — | detail 来自后端具体原因 |
+| 任务失败 | 展示 `task.error_message` | — | 后端返回的具体原因（对话框内展示） |
+| 轮询失败 | `轮询失败` + 具体错误 | — | 对话框内展示详情 |
+| 客户端引用清理失败 | 不弹 toast，`console.warn` 记录 | — | 非阻塞，sync_service 会兜底 |
+
+> 所有 `toast.error` 调用会通过 `use-toast.js` 的 `reportErrorToBackend` 异步上报到 `POST /api/system/frontend-error`，写入后端日志，便于 AI 查错。`toast.warning` 仅 UI 提示不上报。
+
+#### 21.7.3 日志保留与清理
+
+- 后端日志文件保留 30 天（`TimedRotatingFileHandler`，按天轮转）
+- 前端设置页面可清除显示的日志，但不会清除系统保存的日志文件
+- `audit_logs` 表永久保留，作为删除操作的审计依据
+
 ---
 
 ## 22. 测试用例与测试结果
