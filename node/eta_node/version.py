@@ -16,7 +16,9 @@ from __future__ import annotations
 #        所有读取路径补齐软删除过滤、扫描器缺失文件清理与软删除恢复
 # 1.2.2: standalone 启动前端口冲突检测——被 eta_node 自身占用自动杀掉重启，
 #        被其他程序占用报错退出（新增 eta_node.port_manager 模块）
-NODE_VERSION = "1.2.2"
+# 1.2.3: 新增播放完成判定配置——区分音乐/广播剧，按曲目时长应用不同完成百分比，
+#        GET/PUT /api/settings/playback；新增 PlaybackSettings 表（单行，id=1）
+NODE_VERSION = "1.2.3"
 
 # API 协议主版本
 # 当客户端的 CLIENT_API_VERSION 与此值不一致时，视为完全不兼容，

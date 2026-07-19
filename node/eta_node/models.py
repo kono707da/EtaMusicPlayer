@@ -376,6 +376,33 @@ class DataVersion(Base):
     version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
+class PlaybackSettings(Base):
+    """播放完成判定配置（单行表，id=1）
+
+    用于区分音乐和广播剧的播放完成百分比：
+    - 曲目时长 >= duration_threshold_seconds 视为广播剧，应用 broadcast_complete_percent
+    - 曲目时长 <  duration_threshold_seconds 视为音乐，应用 music_complete_percent
+    - 前端播放器在进度达到对应百分比时上报 complete 事件（仅记统计，不自动切歌）
+
+    默认值：分界 900 秒（15 分钟）/ 音乐 90% / 广播剧 70%
+    """
+    __tablename__ = "playback_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    duration_threshold_seconds: Mapped[int] = mapped_column(
+        Integer, default=900, nullable=False,
+        comment="音乐/广播剧分界时长（秒），默认 900=15 分钟",
+    )
+    music_complete_percent: Mapped[int] = mapped_column(
+        Integer, default=90, nullable=False,
+        comment="音乐完成百分比（0-100），默认 90",
+    )
+    broadcast_complete_percent: Mapped[int] = mapped_column(
+        Integer, default=70, nullable=False,
+        comment="广播剧完成百分比（0-100），默认 70",
+    )
+
+
 # 系统播放列表名称常量
 SYSTEM_PLAYLIST_ALL = "全部音乐"
 SYSTEM_PLAYLIST_INBOX = "收集箱"

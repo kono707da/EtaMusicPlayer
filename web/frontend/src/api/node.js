@@ -511,3 +511,22 @@ export async function submitM3uImport(node, payload) {
   })
   return resp.data
 }
+
+// ============ 播放完成判定配置（1.2.3 新增） ============
+
+// 读取节点的播放完成判定配置
+// 返回 { duration_threshold_seconds, music_complete_percent, broadcast_complete_percent }
+// 任何登录用户可读；老节点无此 API 时调用方应捕获错误并用默认值兜底
+export async function getPlaybackSettings(node) {
+  const client = createNodeClient(node)
+  const resp = await client.get('/api/settings/playback')
+  return resp.data
+}
+
+// 更新节点的播放完成判定配置（admin only）
+// payload: { duration_threshold_seconds?, music_complete_percent?, broadcast_complete_percent? }
+export async function updatePlaybackSettings(node, payload) {
+  const client = createNodeClient(node)
+  const resp = await client.put('/api/settings/playback', payload)
+  return resp.data
+}
