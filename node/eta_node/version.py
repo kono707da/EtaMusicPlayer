@@ -14,7 +14,9 @@ from __future__ import annotations
 # 1.2.1: 曲目删除与库一致性——新增 track_delete 任务（补偿事务 + 软删除）、
 #        真 SHA-256 file_hash（替代伪实现）、播放列表权限 view/edit 拆分、
 #        所有读取路径补齐软删除过滤、扫描器缺失文件清理与软删除恢复
-NODE_VERSION = "1.2.1"
+# 1.2.2: standalone 启动前端口冲突检测——被 eta_node 自身占用自动杀掉重启，
+#        被其他程序占用报错退出（新增 eta_node.port_manager 模块）
+NODE_VERSION = "1.2.2"
 
 # API 协议主版本
 # 当客户端的 CLIENT_API_VERSION 与此值不一致时，视为完全不兼容，

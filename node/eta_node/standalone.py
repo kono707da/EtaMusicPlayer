@@ -58,8 +58,13 @@ app = create_standalone_app()
 
 if __name__ == "__main__":
     from eta_node.config import settings
+    from eta_node.port_manager import ensure_port_available
 
     logging.basicConfig(level=logging.INFO)
+    # 启动前确保端口可用：
+    # - 被 eta_node 自身占用：杀掉旧进程
+    # - 被其他程序占用：报错退出
+    ensure_port_available(settings.host, settings.port)
     uvicorn.run(
         app,
         host=settings.host,
