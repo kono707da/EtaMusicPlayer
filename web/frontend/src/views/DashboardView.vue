@@ -144,7 +144,7 @@ onMounted(() => loadDashboard())
               </div>
               <div>
                 <div class="text-2xl font-bold text-foreground">{{ dashboard.tracks_imported_this_week }}</div>
-                <div class="text-xs text-muted-foreground">本周入库</div>
+                <div class="text-xs text-muted-foreground">近 7 天入库</div>
               </div>
             </div>
           </CardContent>
