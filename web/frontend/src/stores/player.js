@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { Howl } from 'howler'
 import { useToast } from '@/components/ui/toast/use-toast'
 import { useNodesStore } from './nodes'
-import { getStreamUrl, reportPlayEvent } from '../api/node'
+import { getStreamUrl, reportPlayEvent, getPlaybackSettings } from '../api/node'
 
 const toast = useToast()
 
@@ -16,6 +16,64 @@ function _reportPlay(nodeId, trackId, eventType) {
   if (!node || !node.token) return
   reportPlayEvent(node, { track_id: trackId, event_type: eventType })
     .catch(() => { /* 静默失败 */ })
+}
+
+// ============ 播放完成判定配置缓存（1.2.3 新增） ============
+// 节点端 GET /api/settings/playback 返回的配置，按 nodeId 缓存
+// 老节点（<1.2.3）无此 API，拉取失败时用默认值兜底
+
+const DEFAULT_PLAYBACK_SETTINGS = {
+  duration_threshold_seconds: 900,   // 15 分钟
+  music_complete_percent: 90,
+  broadcast_complete_percent: 70
+}
+
+// nodeId → settings（已成功拉取）
+const _settingsCache = new Map()
+// nodeId → Promise（进行中，防并发重复请求）
+const _settingsPending = new Map()
+
+/**
+ * 获取节点播放完成配置（带缓存， Promise）
+ * 节点不可用或拉取失败时返回默认值
+ */
+function _getPlaybackSettings(nodeId) {
+  if (_settingsCache.has(nodeId)) return Promise.resolve(_settingsCache.get(nodeId))
+  if (_settingsPending.has(nodeId)) return _settingsPending.get(nodeId)
+
+  const nodesStore = useNodesStore()
+  const node = nodesStore.getNode(nodeId)
+  if (!node || !node.token) {
+    // 节点不可用，直接用默认值（不缓存，下次节点恢复时重试）
+    return Promise.resolve(DEFAULT_PLAYBACK_SETTINGS)
+  }
+
+  const promise = getPlaybackSettings(node)
+    .then((s) => {
+      const settings = {
+        duration_threshold_seconds: s.duration_threshold_seconds ?? DEFAULT_PLAYBACK_SETTINGS.duration_threshold_seconds,
+        music_complete_percent: s.music_complete_percent ?? DEFAULT_PLAYBACK_SETTINGS.music_complete_percent,
+        broadcast_complete_percent: s.broadcast_complete_percent ?? DEFAULT_PLAYBACK_SETTINGS.broadcast_complete_percent
+      }
+      _settingsCache.set(nodeId, settings)
+      _settingsPending.delete(nodeId)
+      return settings
+    })
+    .catch(() => {
+      // 老节点无此 API 或网络错误，用默认值兜底（不缓存，下次重试）
+      _settingsPending.delete(nodeId)
+      return DEFAULT_PLAYBACK_SETTINGS
+    })
+  _settingsPending.set(nodeId, promise)
+  return promise
+}
+
+/**
+ * 清除节点配置缓存（用户在 NodesView 修改配置后调用，让下次播放重新拉取）
+ */
+function _invalidatePlaybackSettings(nodeId) {
+  _settingsCache.delete(nodeId)
+  _settingsPending.delete(nodeId)
 }
 
 /**
@@ -39,6 +97,9 @@ export const usePlayerStore = defineStore('player', () => {
   const loading = ref(false)
 
   let howl = null
+  // 1.2.3：播放完成判定状态（非响应式，store 内部使用）
+  let completeReported = false      // 当前曲目是否已上报过 complete
+  let completeThresholdSec = 0      // 当前曲目的完成阈值（秒），0 表示未计算
 
   // 音量变化时持久化到 localStorage
   watch(volume, (v) => {
@@ -51,6 +112,30 @@ export const usePlayerStore = defineStore('player', () => {
 
   const currentTrack = computed(() => current.value?.track || null)
   const currentNodeName = computed(() => current.value?.nodeName || '')
+
+  /**
+   * 根据当前曲目时长和节点配置计算完成阈值（秒）
+   * 异步：先取节点配置，再按时长判断属于音乐还是广播剧
+   * 异步期间若已切歌则放弃更新
+   */
+  async function _updateCompleteThreshold() {
+    const cur = current.value
+    if (!cur || !duration.value) {
+      completeThresholdSec = 0
+      return
+    }
+    const nodeId = cur.nodeId
+    const dur = duration.value
+    const settings = await _getPlaybackSettings(nodeId)
+    // 异步期间可能已切歌，校验仍是同一首
+    if (!current.value || current.value.nodeId !== nodeId || current.value.track.id !== cur.track.id) {
+      return
+    }
+    const percent = dur >= settings.duration_threshold_seconds
+      ? settings.broadcast_complete_percent
+      : settings.music_complete_percent
+    completeThresholdSec = dur * percent / 100
+  }
 
   /**
    * 加载并播放当前曲目
@@ -72,6 +157,9 @@ export const usePlayerStore = defineStore('player', () => {
       howl.unload()
       howl = null
     }
+    // 重置完成判定状态
+    completeReported = false
+    completeThresholdSec = 0
     loading.value = true
     howl = new Howl({
       src: [url],
@@ -81,6 +169,8 @@ export const usePlayerStore = defineStore('player', () => {
       onload() {
         duration.value = howl.duration()
         loading.value = false
+        // 加载完成后计算完成阈值（异步，不阻塞播放）
+        _updateCompleteThreshold()
       },
       onplay() {
         isPlaying.value = true
@@ -91,8 +181,11 @@ export const usePlayerStore = defineStore('player', () => {
         isPlaying.value = false
       },
       onend() {
-        // 上报 complete 事件
-        _reportPlay(current.value.nodeId, current.value.track.id, 'complete')
+        // 自然结束：兜底上报 complete（如果还没上报过）
+        if (!completeReported) {
+          completeReported = true
+          _reportPlay(current.value.nodeId, current.value.track.id, 'complete')
+        }
         // 自动播放下一首
         if (currentIndex.value < queue.value.length - 1) {
           currentIndex.value++
@@ -161,8 +254,9 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function next() {
-    // 如果当前曲目正在播放（非自然结束），上报 skip 事件
-    if (current.value && isPlaying.value) {
+    // 1.2.3：仅当未上报 complete 时才上报 skip
+    // （已上报 complete 后用户切歌不算 skip，避免广播剧听到 70% 后切走被记 skip）
+    if (current.value && isPlaying.value && !completeReported) {
       _reportPlay(current.value.nodeId, current.value.track.id, 'skip')
     }
     if (currentIndex.value < queue.value.length - 1) {
@@ -175,7 +269,7 @@ export const usePlayerStore = defineStore('player', () => {
   }
 
   function prev() {
-    if (current.value && isPlaying.value) {
+    if (current.value && isPlaying.value && !completeReported) {
       _reportPlay(current.value.nodeId, current.value.track.id, 'skip')
     }
     if (currentIndex.value > 0) {
@@ -189,6 +283,10 @@ export const usePlayerStore = defineStore('player', () => {
    */
   function jumpTo(index) {
     if (index < 0 || index >= queue.value.length) return
+    // 跳转视为切歌：若当前未完成且正在播放，上报 skip
+    if (current.value && isPlaying.value && !completeReported && index !== currentIndex.value) {
+      _reportPlay(current.value.nodeId, current.value.track.id, 'skip')
+    }
     currentIndex.value = index
     loadCurrent()
   }
@@ -201,16 +299,23 @@ export const usePlayerStore = defineStore('player', () => {
     if (howl) {
       howl.seek(seconds)
       progress.value = seconds
+      // seek 后由 tick() 检测是否达到完成阈值（不在这里直接触发，避免拖动进度条时误触发）
     }
   }
 
   /**
    * 进度轮询：从 Howl 实例读取当前播放进度
    * 供播放器组件定时调用（html5 模式下没有逐帧回调）
+   * 1.2.3：同时检查是否达到播放完成阈值，达到则上报 complete（仅记统计，不切歌）
    */
   function tick() {
     if (howl && isPlaying.value) {
       progress.value = howl.seek() || 0
+      // 达到完成阈值且未上报过：上报 complete（仅一次）
+      if (!completeReported && completeThresholdSec > 0 && progress.value >= completeThresholdSec) {
+        completeReported = true
+        _reportPlay(current.value.nodeId, current.value.track.id, 'complete')
+      }
     }
   }
 
@@ -232,6 +337,8 @@ export const usePlayerStore = defineStore('player', () => {
     isPlaying.value = false
     progress.value = 0
     duration.value = 0
+    completeReported = false
+    completeThresholdSec = 0
   }
 
   /**
@@ -275,6 +382,8 @@ export const usePlayerStore = defineStore('player', () => {
       isPlaying.value = false
       progress.value = 0
       duration.value = 0
+      completeReported = false
+      completeThresholdSec = 0
       return
     }
 
@@ -290,6 +399,14 @@ export const usePlayerStore = defineStore('player', () => {
       currentIndex.value = oldIndex - removedBeforeCurrent
     }
     // 若删除在当前之后：currentIndex 不变
+  }
+
+  /**
+   * 1.2.3：清除节点播放配置缓存
+   * 用户在 NodesView 修改了节点配置后调用，让下次播放重新拉取
+   */
+  function invalidatePlaybackSettings(nodeId) {
+    _invalidatePlaybackSettings(nodeId)
   }
 
   return {
@@ -315,6 +432,7 @@ export const usePlayerStore = defineStore('player', () => {
     tick,
     setVolume,
     clearQueue,
-    removeTrack
+    removeTrack,
+    invalidatePlaybackSettings
   }
 })

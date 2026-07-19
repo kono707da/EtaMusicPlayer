@@ -35,14 +35,17 @@ import {
   deleteRemoteNode,
   loginRemoteNode
 } from '../api/plugin'
-import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, CircleAlert, Settings, AlertTriangle, Info, CheckCircle2 } from 'lucide-vue-next'
+import { Plus, Loader2, HardDrive, Server, Zap, Pencil, Trash2, CircleAlert, Settings, AlertTriangle, Info, CheckCircle2, SlidersHorizontal } from 'lucide-vue-next'
 import { FEATURE_REGISTRY } from '../config/version'
+import { getPlaybackSettings, updatePlaybackSettings } from '../api/node'
+import { usePlayerStore } from '../stores/player'
 
 const route = useRoute()
 const router = useRouter()
 const nodesStore = useNodesStore()
 const authStore = useAuthStore()
 const pluginsStore = usePluginsStore()
+const playerStore = usePlayerStore()
 const toast = useToast()
 const { confirm } = useConfirm()
 
@@ -72,6 +75,19 @@ const remoteNodeErrors = reactive({})
 const remoteNodeSaveError = ref('')
 
 const isEditingRemoteNode = computed(() => editingRemoteNodeId.value !== null)
+
+// ============ 播放完成判定配置（1.2.3 新增） ============
+// 每个已登录节点可单独配置：时长阈值 + 音乐/广播剧完成百分比
+const playbackDialogVisible = ref(false)
+const playbackEditingNode = ref(null)  // 当前编辑的节点 row
+const playbackLoading = ref(false)
+const playbackSaving = ref(false)
+const playbackError = ref('')
+const playbackForm = reactive({
+  duration_threshold_seconds: 900,    // 秒，默认 15 分钟
+  music_complete_percent: 90,
+  broadcast_complete_percent: 70
+})
 
 async function loadRemoteNodes() {
   remoteNodeLoading.value = true
@@ -385,6 +401,98 @@ function getFeatureDescription(feat) {
   return FEATURE_REGISTRY[feat]?.description || ''
 }
 
+// ============ 播放完成判定配置（1.2.3 新增） ============
+
+/**
+ * 打开播放配置 modal 并加载节点当前配置
+ * 仅在线节点可配置（离线节点 API 不可达）
+ */
+async function openPlaybackSettings(row) {
+  playbackEditingNode.value = row
+  playbackError.value = ''
+  playbackDialogVisible.value = true
+  playbackLoading.value = true
+  // 重置为默认值（加载失败时也能看到合理默认）
+  playbackForm.duration_threshold_seconds = 900
+  playbackForm.music_complete_percent = 90
+  playbackForm.broadcast_complete_percent = 70
+  try {
+    const node = nodesStore.getNode(`remote-${row.id}`)
+    if (!node || !node.token) {
+      playbackError.value = '节点未登录，无法读取配置'
+      return
+    }
+    const s = await getPlaybackSettings(node)
+    playbackForm.duration_threshold_seconds = s.duration_threshold_seconds ?? 900
+    playbackForm.music_complete_percent = s.music_complete_percent ?? 90
+    playbackForm.broadcast_complete_percent = s.broadcast_complete_percent ?? 70
+  } catch (e) {
+    // 老节点无此 API（404）或其他错误：保留默认值，提示用户
+    const status = e?.response?.status
+    if (status === 404) {
+      playbackError.value = '节点版本过低不支持播放配置，请升级节点至 1.2.3+'
+    } else {
+      playbackError.value = '读取配置失败：' + (e?.response?.data?.detail || e.message || '网络错误')
+    }
+  } finally {
+    playbackLoading.value = false
+  }
+}
+
+/**
+ * 保存播放配置到节点端
+ * 同时清除 player store 的缓存，让下次播放重新拉取
+ */
+async function savePlaybackSettings() {
+  const row = playbackEditingNode.value
+  if (!row) return
+  // 校验
+  const threshold = Number(playbackForm.duration_threshold_seconds)
+  const music = Number(playbackForm.music_complete_percent)
+  const broadcast = Number(playbackForm.broadcast_complete_percent)
+  if (!Number.isFinite(threshold) || threshold < 60 || threshold > 86400) {
+    playbackError.value = '分界时长需在 60-86400 秒之间'
+    return
+  }
+  if (!Number.isFinite(music) || music < 1 || music > 100) {
+    playbackError.value = '音乐完成百分比需在 1-100 之间'
+    return
+  }
+  if (!Number.isFinite(broadcast) || broadcast < 1 || broadcast > 100) {
+    playbackError.value = '广播剧完成百分比需在 1-100 之间'
+    return
+  }
+  playbackError.value = ''
+  playbackSaving.value = true
+  try {
+    const node = nodesStore.getNode(`remote-${row.id}`)
+    if (!node || !node.token) {
+      playbackError.value = '节点未登录，无法保存配置'
+      return
+    }
+    await updatePlaybackSettings(node, {
+      duration_threshold_seconds: threshold,
+      music_complete_percent: music,
+      broadcast_complete_percent: broadcast
+    })
+    // 清除 player store 缓存，让下次播放重新拉取
+    playerStore.invalidatePlaybackSettings(`remote-${row.id}`)
+    toast.success('播放配置已保存', `节点「${row.name}」配置已更新`)
+    playbackDialogVisible.value = false
+  } catch (e) {
+    const status = e?.response?.status
+    if (status === 403) {
+      playbackError.value = '需要管理员权限才能修改配置'
+    } else if (status === 404) {
+      playbackError.value = '节点版本过低不支持播放配置，请升级节点至 1.2.3+'
+    } else {
+      playbackError.value = '保存配置失败：' + (e?.response?.data?.detail || e.message || '网络错误')
+    }
+  } finally {
+    playbackSaving.value = false
+  }
+}
+
 onMounted(() => {
   pluginsStore.syncLocalNode(nodesStore)
   loadRemoteNodes()
@@ -528,6 +636,15 @@ onMounted(() => {
                   >
                     <Settings class="h-4 w-4" />
                     管理
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    :disabled="nodeHealth[row.id]?.status !== 'online'"
+                    @click="openPlaybackSettings(row)"
+                  >
+                    <SlidersHorizontal class="h-4 w-4" />
+                    播放设置
                   </Button>
                   <Button
                     v-if="nodeHealth[row.id]?.status === 'incompatible' || nodeHealth[row.id]?.status === 'auth_failed' || nodeHealth[row.id]?.status === 'offline'"
@@ -712,6 +829,80 @@ onMounted(() => {
 
         <DialogFooter>
           <Button variant="ghost" @click="detailDialogVisible = false">关闭</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- 播放完成判定配置对话框（1.2.3 新增） -->
+    <Dialog :open="playbackDialogVisible" @update:open="(v) => !v && (playbackDialogVisible = false)">
+      <DialogContent class="max-w-md">
+        <DialogHeader>
+          <DialogTitle>播放设置：{{ playbackEditingNode?.name }}</DialogTitle>
+          <DialogDescription>
+            按曲目时长区分音乐和广播剧，分别设置播放完成百分比。达到百分比时记为完成（仅统计，不切歌）。
+          </DialogDescription>
+        </DialogHeader>
+
+        <Alert v-if="playbackError" variant="destructive" class="flex items-start gap-3 border-l-4">
+          <CircleAlert class="h-4 w-4 mt-0.5 shrink-0" />
+          <AlertDescription class="text-destructive font-medium">
+            {{ playbackError }}
+          </AlertDescription>
+        </Alert>
+
+        <div v-if="playbackLoading" class="flex items-center justify-center py-6 text-muted-foreground">
+          <Loader2 class="h-4 w-4 animate-spin mr-2" />
+          加载配置中...
+        </div>
+
+        <div v-else class="space-y-4">
+          <div class="space-y-2">
+            <Label for="pb-threshold">音乐/广播剧分界时长（分钟）</Label>
+            <Input
+              id="pb-threshold"
+              :model-value="String(Math.round(playbackForm.duration_threshold_seconds / 60))"
+              @update:model-value="(v) => playbackForm.duration_threshold_seconds = Math.round((Number(v) || 0) * 60)"
+              type="number"
+              min="1"
+              max="1440"
+              class="bg-secondary/60"
+            />
+            <p class="text-xs text-muted-foreground">时长 ≥ 此值的曲目视为广播剧，否则视为音乐。范围 1-1440 分钟。</p>
+          </div>
+
+          <div class="space-y-2">
+            <Label for="pb-music">音乐完成百分比（%）</Label>
+            <Input
+              id="pb-music"
+              v-model="playbackForm.music_complete_percent"
+              type="number"
+              min="1"
+              max="100"
+              class="bg-secondary/60"
+            />
+            <p class="text-xs text-muted-foreground">音乐播放到此百分比时记为完成。范围 1-100。</p>
+          </div>
+
+          <div class="space-y-2">
+            <Label for="pb-broadcast">广播剧完成百分比（%）</Label>
+            <Input
+              id="pb-broadcast"
+              v-model="playbackForm.broadcast_complete_percent"
+              type="number"
+              min="1"
+              max="100"
+              class="bg-secondary/60"
+            />
+            <p class="text-xs text-muted-foreground">广播剧播放到此百分比时记为完成。范围 1-100。</p>
+          </div>
+        </div>
+
+        <DialogFooter class="gap-2">
+          <Button variant="ghost" @click="playbackDialogVisible = false">取消</Button>
+          <Button variant="gold" :disabled="playbackSaving || playbackLoading" @click="savePlaybackSettings">
+            <Loader2 v-if="playbackSaving" class="h-4 w-4 animate-spin" />
+            保存
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

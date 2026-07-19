@@ -18,7 +18,7 @@ from eta_node.config import settings
 from eta_node.security import hash_password
 
 from eta_node.database import SessionLocal, init_db
-from eta_node.models import DedupConfig, Playlist, User, SYSTEM_PLAYLIST_ALL, SYSTEM_PLAYLIST_INBOX
+from eta_node.models import DedupConfig, PlaybackSettings, Playlist, User, SYSTEM_PLAYLIST_ALL, SYSTEM_PLAYLIST_INBOX
 from eta_node.dedup import DEFAULT_FIELDS, DEFAULT_DURATION_TOLERANCE
 
 from eta_node.routers import (
@@ -32,6 +32,7 @@ from eta_node.routers import (
     playlists,
     quality,
     scan,
+    settings as settings_router,  # 别名避免覆盖 config.settings
     stats,
     system,
     tasks,
@@ -144,6 +145,19 @@ def bootstrap() -> None:
             db.add(cfg)
             db.commit()
             logger.info("本地节点：已创建默认去重配置")
+
+        # 4. 创建默认 PlaybackSettings（id=1，1.2.3 新增）
+        pb_cfg = db.get(PlaybackSettings, 1)
+        if pb_cfg is None:
+            pb_cfg = PlaybackSettings(
+                id=1,
+                duration_threshold_seconds=900,
+                music_complete_percent=90,
+                broadcast_complete_percent=70,
+            )
+            db.add(pb_cfg)
+            db.commit()
+            logger.info("本地节点：已创建默认播放完成配置（分界 900s / 音乐 90% / 广播剧 70%）")
     finally:
         db.close()
 
@@ -184,6 +198,7 @@ def create_local_node_app() -> FastAPI:
     sub_app.include_router(audit.router)
     sub_app.include_router(stats.router)
     sub_app.include_router(data_sync.router)
+    sub_app.include_router(settings_router.router)
 
     @sub_app.get("/health", tags=["root"])
     def local_health() -> dict:
