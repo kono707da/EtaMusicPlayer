@@ -23,6 +23,7 @@ PLUGIN_PACKAGE_MAP: dict[str, str] = {
     "shared": "eta_shared",
     "asmr_one": "eta_asmr",
     "bili_audio": "eta_bili",
+    "netease_music": "eta_netease",
 }
 
 # 插件搜索路径（name -> 目录 Path）
