@@ -34,6 +34,8 @@ web/backend/data/*.db-journal
 web/backend/data/*.db-shm
 web/backend/data/*.db-wal
 web/backend/data/uploads/
+web/backend/data/settings.json
+web/backend/data/netease_accounts/
 node/data/*.db
 node/data/*.db-journal
 node/data/*.db-shm
