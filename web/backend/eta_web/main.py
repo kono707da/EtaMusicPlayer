@@ -24,6 +24,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from eta_web.plugins import load_plugins
 from eta_web.plugins_manager.routers import router as plugins_router, set_loaded_plugins
 from eta_web.plugins_manager.database import init_db
+from eta_web.plugins_manager.frontend import get_plugin_frontend_dist
+from eta_web.plugins.registry import PLUGIN_SEARCH_PATHS
 from eta_web.system_routes import router as system_router
 from eta_web.client_playlists.routers import router as client_playlists_router
 from eta_web.node_cache.routers import router as node_cache_router
@@ -79,6 +81,24 @@ async def lifespan(app: FastAPI):
             "前端 dist 目录不存在（%s），请先运行 npm run build；当前仅提供 API",
             FRONTEND_DIST,
         )
+
+    # 挂载插件前端静态资源：/plugins-assets/<name>/ → plugins/<name>/frontend/dist/
+    # 只挂载已发现插件中存在 frontend/dist 的那些
+    for plugin_name in list(PLUGIN_SEARCH_PATHS.keys()):
+        dist_dir = get_plugin_frontend_dist(plugin_name)
+        if dist_dir.is_dir():
+            mount_path = f"/plugins-assets/{plugin_name}"
+            try:
+                app.mount(
+                    mount_path,
+                    StaticFiles(directory=str(dist_dir)),
+                    name=f"plugins-assets-{plugin_name}",
+                )
+                logger.info("已挂载插件前端资源: %s -> %s", mount_path, dist_dir)
+            except (RuntimeError, OSError) as e:
+                logger.warning(
+                    "挂载插件 %s 前端资源失败: %s", plugin_name, e
+                )
     yield
 
 

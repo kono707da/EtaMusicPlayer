@@ -11,12 +11,15 @@ import {
   DialogDescription
 } from '@/components/ui/dialog'
 import { Loader2, Check, ImageOff, FileImage, Tag, ImagePlus } from 'lucide-vue-next'
-import { coverUrl, applyCover } from '../plugins/asmr_one/api'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   taskId: { type: [Number, String], default: null },
-  workId: { type: [Number, String], required: true }
+  workId: { type: [Number, String], required: true },
+  // 由调用方（插件）注入的封面 URL 构造函数
+  coverUrl: { type: Function, required: true },
+  // 由调用方（插件）注入的封面应用函数
+  applyCover: { type: Function, required: true }
 })
 const emit = defineEmits(['update:open', 'applied'])
 
@@ -56,7 +59,7 @@ const modeOptions = computed(() => [
 
 // 用时间戳避免缓存（注意 coverUrl 已含 ?type=，需用 & 拼接）
 const coverSrc = (type) => {
-  const base = coverUrl(props.workId, type)
+  const base = props.coverUrl(props.workId, type)
   return base.includes('?') ? `${base}&_t=${Date.now()}` : `${base}?_t=${Date.now()}`
 }
 
@@ -78,7 +81,7 @@ async function onConfirm() {
   }
   applying.value = true
   try {
-    const res = await applyCover(props.taskId, selected.value, coverMode.value)
+    const res = await props.applyCover(props.taskId, selected.value, coverMode.value)
     if (res.cover_applied) {
       const modeLabel = modeOptions.value.find((m) => m.value === coverMode.value)?.label || ''
       toast.success(`封面已应用（${modeLabel}）`)

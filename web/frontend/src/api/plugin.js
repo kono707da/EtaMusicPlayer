@@ -158,3 +158,28 @@ export async function getSystemLogs(params = {}) {
   const resp = await client.get('/api/system/logs', { params: query, timeout: 15000 })
   return resp.data
 }
+
+// ===== 插件设置（全局设置页调用） =====
+// 这些端点由各插件后端注册（/api/asmr/settings、/api/bili/settings），
+// 主应用全局设置页直接调用，不依赖插件前端 bundle。
+
+export async function getAsmrSettings() {
+  const resp = await client.get('/api/asmr/settings', { timeout: 10000 })
+  return resp.data
+}
+
+export async function updateAsmrSettings(updates) {
+  const resp = await client.put('/api/asmr/settings', updates, { timeout: 10000 })
+  return resp.data
+}
+
+export async function getBiliSettings() {
+  const resp = await client.get('/api/bili/settings', { timeout: 10000 })
+  return resp.data
+}
+
+export async function updateBiliSettings(updates) {
+  // B站插件设置接口接受 [{key, value}, ...] 数组
+  const resp = await client.put('/api/bili/settings', updates, { timeout: 10000 })
+  return resp.data
+}
