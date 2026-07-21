@@ -1,0 +1,8 @@
+{
+  "name": "netease_music",
+  "version": "1.4.0",
+  "description": "网易云音乐插件：扫码登录、搜索、播放、歌单管理",
+  "author": "EtaMusicPlayer",
+  "entry": "index.js",
+  "min_host_version": "1.4.0"
+}

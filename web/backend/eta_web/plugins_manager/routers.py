@@ -303,6 +303,50 @@ def restart_server() -> PluginRestartResponse:
     )
 
 
+# ===== 插件前端资源 =====
+
+from eta_web.plugins_manager.frontend import (
+    has_frontend as _plugin_has_frontend,
+    list_frontend_manifests as _list_frontend_manifests,
+    read_frontend_manifest as _read_frontend_manifest,
+)
+
+
+@router.get("/frontend-manifests")
+def list_enabled_frontend_manifests(db: Session = Depends(get_db)) -> dict:
+    """返回所有已启用插件的前端 manifest 列表
+
+    前端启动时调用此接口，根据 manifest 动态加载插件前端 bundle。
+    local_node 的前端逻辑已内置在主应用，不在此返回。
+
+    Returns:
+        { manifests: [{name, version, entry, routes, navItems, ...}] }
+    """
+    enabled_names = [
+        p.name for p in db.query(Plugin).filter(Plugin.enabled.is_(True)).all()
+    ]
+    manifests = _list_frontend_manifests(enabled_names)
+    return {"manifests": manifests}
+
+
+@router.get("/{name}/frontend-manifest")
+def get_plugin_frontend_manifest(name: str) -> dict:
+    """查询单个插件的前端 manifest
+
+    不要求插件已启用（用于插件管理页预览/检查）。
+    """
+    m = _read_frontend_manifest(name)
+    if m is None:
+        raise HTTPException(status_code=404, detail=f"插件 {name} 无前端资源或未安装")
+    return m
+
+
+@router.get("/{name}/frontend-available")
+def check_plugin_frontend(name: str) -> dict:
+    """检查插件是否提供前端资源"""
+    return {"name": name, "frontend_available": _plugin_has_frontend(name)}
+
+
 @router.get("/local-node/status")
 def local_node_status(db: Session = Depends(get_db)) -> dict:
     """查询本地节点插件的状态

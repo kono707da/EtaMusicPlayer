@@ -1,0 +1,8 @@
+{
+  "name": "asmr_one",
+  "version": "1.4.0",
+  "description": "asmr.one 资源插件：搜索、试听、下载、收藏、评价",
+  "author": "EtaMusicPlayer",
+  "entry": "index.js",
+  "min_host_version": "1.4.0"
+}

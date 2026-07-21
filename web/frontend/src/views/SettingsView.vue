@@ -10,9 +10,12 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 import { Save, Loader2, Settings, Headphones, Music, RefreshCw, Download, ScrollText, Eraser } from 'lucide-vue-next'
 import { usePluginsStore } from '../stores/plugins'
 import { useAuthStore } from '../stores/auth'
-import { getSystemLogs } from '../api/plugin'
+import {
+  getSystemLogs,
+  getAsmrSettings, updateAsmrSettings,
+  getBiliSettings, updateBiliSettings
+} from '../api/plugin'
 
-// 插件 API 采用动态 import：插件未启用时不会加载其模块代码
 const toast = useToast()
 const pluginsStore = usePluginsStore()
 const authStore = useAuthStore()
@@ -115,7 +118,6 @@ const watchDirs = ref([])
 async function loadAsmrSettings() {
   asmrLoading.value = true
   try {
-    const { getSettings: getAsmrSettings } = await import('../plugins/asmr_one/api')
     const data = await getAsmrSettings()
     asmrForm.value = {
       proxy_url: data.proxy_url ?? '',
@@ -143,7 +145,6 @@ async function loadAsmrSettings() {
 async function saveAsmrSettings() {
   asmrSaving.value = true
   try {
-    const { updateSettings: updateAsmrSettings } = await import('../plugins/asmr_one/api')
     await updateAsmrSettings({
       ...asmrForm.value,
       verify_ssl: asmrForm.value.verify_ssl ? 'true' : 'false'
@@ -168,7 +169,6 @@ const biliSaving = ref(false)
 async function loadBiliSettings() {
   biliLoading.value = true
   try {
-    const { getSettings: getBiliSettings } = await import('../plugins/bili_audio/api')
     const data = await getBiliSettings()
     biliForm.value = {
       proxy_url: data.proxy_url ?? '',
@@ -185,7 +185,6 @@ async function loadBiliSettings() {
 async function saveBiliSettings() {
   biliSaving.value = true
   try {
-    const { updateSettings: updateBiliSettings } = await import('../plugins/bili_audio/api')
     const updates = [
       { key: 'proxy_url', value: biliForm.value.proxy_url },
       { key: 'sessdata', value: biliForm.value.sessdata },

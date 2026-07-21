@@ -1,0 +1,8 @@
+{
+  "name": "bili_audio",
+  "version": "1.4.0",
+  "description": "B站音频下载插件：视频转音频、订阅管理",
+  "author": "EtaMusicPlayer",
+  "entry": "index.js",
+  "min_host_version": "1.4.0"
+}

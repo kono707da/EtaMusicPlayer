@@ -1,0 +1,18 @@
+{
+  "name": "etamusic-plugin-asmr-one-frontend",
+  "version": "1.4.0",
+  "description": "asmr.one 插件前端 - EtaMusicPlayer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.5",
+    "vite": "^5.3.3",
+    "vue": "^3.4.31"
+  }
+}
