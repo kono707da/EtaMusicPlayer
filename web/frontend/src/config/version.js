@@ -7,7 +7,7 @@
  */
 
 // 客户端软件版本号
-export const CLIENT_VERSION = '1.4.0'
+export const CLIENT_VERSION = '1.4.1'
 
 // 客户端支持的 API 协议主版本
 // 与 node 的 API_VERSION 不一致时，视为完全不兼容

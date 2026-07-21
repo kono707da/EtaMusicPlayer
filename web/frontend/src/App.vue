@@ -122,6 +122,21 @@ onMounted(async () => {
 async function refreshRemoteTokens() {
   try {
     const remoteNodes = await listRemoteNodes()
+
+    // 反向清理：localStorage 中存在但后端已删除的远程节点，需从 store 中移除
+    // 仅匹配 id 形如 remote-{数字} 的节点，本地节点（id 为数字）不动
+    const backendNodeIds = new Set(remoteNodes.map((row) => `remote-${row.id}`))
+    const staleRemoteNodes = nodesStore.nodes.filter((n) => {
+      if (typeof n.id !== 'string') return false
+      return n.id.startsWith('remote-') && !backendNodeIds.has(n.id)
+    })
+    if (staleRemoteNodes.length > 0) {
+      for (const n of staleRemoteNodes) {
+        nodesStore.removeNode(n.id)
+      }
+      console.warn(`已清理 ${staleRemoteNodes.length} 个后端已删除的远程节点残留`)
+    }
+
     await Promise.allSettled(
       remoteNodes.map(async (row) => {
         const storeNodeId = `remote-${row.id}`
