@@ -7,6 +7,7 @@
  */
 import asmr_one from './asmr_one'
 import bili_audio from './bili_audio'
+import netease_music from './netease'
 
 let local_node = null
 try {
@@ -19,7 +20,7 @@ try {
   // local_node 插件前端模块不存在，跳过
 }
 
-const allPlugins = [local_node, asmr_one, bili_audio].filter(Boolean)
+const allPlugins = [local_node, asmr_one, bili_audio, netease_music].filter(Boolean)
 
 /**
  * 获取已启用插件的 manifest 列表
