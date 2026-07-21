@@ -9,8 +9,10 @@ const toast = useToast()
 
 /**
  * 上报播放事件到节点（静默失败，不阻塞播放）
+ * 外部源（无 nodeId，如网易云）跳过上报
  */
 function _reportPlay(nodeId, trackId, eventType) {
+  if (!nodeId) return
   const nodesStore = useNodesStore()
   const node = nodesStore.nodes.find((n) => n.id === nodeId)
   if (!node || !node.token) return
@@ -125,6 +127,11 @@ export const usePlayerStore = defineStore('player', () => {
       return
     }
     const nodeId = cur.nodeId
+    if (!nodeId) {
+      // 外部源（如网易云）无节点配置，跳过完成阈值计算
+      completeThresholdSec = 0
+      return
+    }
     const dur = duration.value
     const settings = await _getPlaybackSettings(nodeId)
     // 异步期间可能已切歌，校验仍是同一首
@@ -139,12 +146,67 @@ export const usePlayerStore = defineStore('player', () => {
 
   /**
    * 加载并播放当前曲目
-   * 支持跨节点：每条曲目自带 __nodeId / __nodeName
+   * 支持两种来源：
+   * 1. 节点曲目：每条曲目自带 __nodeId / __nodeName，通过 getStreamUrl 拼接 URL
+   * 2. 外部源：track 自带 __streamUrl（如网易云），直接使用，不依赖节点
    */
   function loadCurrent() {
     if (!current.value) return
+    const cur = current.value
+    const track = cur.track
+
+    // 外部源播放（track 自带 __streamUrl，如网易云）
+    if (track.__streamUrl) {
+      if (howl) {
+        howl.unload()
+        howl = null
+      }
+      completeReported = false
+      completeThresholdSec = 0
+      loading.value = true
+      howl = new Howl({
+        src: [track.__streamUrl],
+        format: ['mp3', 'flac', 'wav', 'ogg', 'm4a'],
+        html5: true,
+        volume: volume.value,
+        onload() {
+          duration.value = howl.duration()
+          loading.value = false
+          // 外部源无节点配置，跳过完成阈值计算
+        },
+        onplay() {
+          isPlaying.value = true
+          // 外部源不上报 play 事件
+        },
+        onpause() {
+          isPlaying.value = false
+        },
+        onend() {
+          // 外部源不上报 complete
+          // 自动播放下一首
+          if (currentIndex.value < queue.value.length - 1) {
+            currentIndex.value++
+            loadCurrent()
+          } else {
+            isPlaying.value = false
+          }
+        },
+        onloaderror() {
+          loading.value = false
+          toast.error('音频加载失败')
+        },
+        onplayerror() {
+          loading.value = false
+          toast.error('播放失败')
+        }
+      })
+      howl.play()
+      return
+    }
+
+    // 节点曲目播放（原逻辑）
     const nodesStore = useNodesStore()
-    const nodeId = current.value.nodeId
+    const nodeId = cur.nodeId
     const node = nodesStore.getNode(nodeId)
     if (!node || !node.token) {
       // 节点不可用：标记停止，由用户手动跳过（避免自动跳过递归）
@@ -152,7 +214,7 @@ export const usePlayerStore = defineStore('player', () => {
       isPlaying.value = false
       return
     }
-    const url = getStreamUrl(node, current.value.track.id)
+    const url = getStreamUrl(node, track.id)
     if (howl) {
       howl.unload()
       howl = null
@@ -175,7 +237,7 @@ export const usePlayerStore = defineStore('player', () => {
       onplay() {
         isPlaying.value = true
         // 上报 play 事件
-        _reportPlay(current.value.nodeId, current.value.track.id, 'play')
+        _reportPlay(cur.nodeId, track.id, 'play')
       },
       onpause() {
         isPlaying.value = false
@@ -184,7 +246,7 @@ export const usePlayerStore = defineStore('player', () => {
         // 自然结束：兜底上报 complete（如果还没上报过）
         if (!completeReported) {
           completeReported = true
-          _reportPlay(current.value.nodeId, current.value.track.id, 'complete')
+          _reportPlay(cur.nodeId, track.id, 'complete')
         }
         // 自动播放下一首
         if (currentIndex.value < queue.value.length - 1) {
@@ -216,7 +278,7 @@ export const usePlayerStore = defineStore('player', () => {
     if (!tracks || tracks.length === 0) return
     queue.value = tracks.map((t) => ({
       track: t,
-      nodeId: t.__nodeId,
+      nodeId: t.__nodeId || null,
       nodeName: t.__nodeName || ''
     }))
     currentIndex.value = startIndex
@@ -226,11 +288,12 @@ export const usePlayerStore = defineStore('player', () => {
   /**
    * 追加到队列末尾（不切换播放）
    * 跨节点：每条曲目自带 __nodeId / __nodeName
+   * 外部源（如网易云）无 __nodeId，但 track 自带 __streamUrl
    */
   function appendTracks(tracks) {
     const items = tracks.map((t) => ({
       track: t,
-      nodeId: t.__nodeId,
+      nodeId: t.__nodeId || null,
       nodeName: t.__nodeName || ''
     }))
     queue.value.push(...items)
