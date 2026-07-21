@@ -690,15 +690,19 @@ def delete_remote_node(node_id: int, db: Session = Depends(get_db)):
 
     同时清理该节点的所有缓存数据（曲库缓存、播放列表缓存、同步状态）
     以及客户端播放列表中引用该节点的条目。
+
+    执行顺序：先清理缓存（ClientPlaylistItem 等），再删 RemoteNode。
+    避免「先 commit 删节点，后 cleanup 抛异常返回 500，但 DB 中节点已无」
+    导致前端误判删除成功而后端残留不一致的问题。
     """
     node = db.get(RemoteNode, node_id)
     if node is None:
         raise HTTPException(status_code=404, detail="远程节点不存在")
-    db.delete(node)
-    db.commit()
     # 级联清理缓存数据（CASCADE 会处理 FK，但客户端播放列表引用需显式清理）
     from eta_web.node_cache.sync_service import cleanup_node_cache
     cleanup_node_cache(db, node_id)
+    db.delete(node)
+    db.commit()
 
 
 @router.post("/remote-nodes/{node_id}/test")

@@ -274,7 +274,11 @@ def cleanup_node_cache(db: Session, node_id: int) -> None:
     # 3. 清理同步状态
     db.query(NodeSyncState).filter(NodeSyncState.node_id == node_id).delete()
     # 4. 清理客户端播放列表中引用该节点的条目
+    #    ClientPlaylistItem.node_id 为字符串，写入时格式为 "remote-{id}"
+    #    旧版本 cleanup 使用 str(node_id)（如 "5"）导致残留，此处同时清理两种格式
     from eta_web.client_playlists.models import ClientPlaylistItem
-    db.query(ClientPlaylistItem).filter(ClientPlaylistItem.node_id == str(node_id)).delete()
+    db.query(ClientPlaylistItem).filter(
+        ClientPlaylistItem.node_id.in_([f"remote-{node_id}", str(node_id)])
+    ).delete(synchronize_session=False)
     db.commit()
     logger.info("已清理节点 %s 的所有缓存数据", node_id)
