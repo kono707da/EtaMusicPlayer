@@ -5,11 +5,13 @@ import { useNodesStore } from './nodes'
 import {
   getTracks,
   getPlaylists,
-  getPlaylistDetail
+  getPlaylistDetail,
+  getPlaylistFolders
 } from '../api/node'
 import {
   listClientPlaylists,
-  listClientPlaylistItems
+  listClientPlaylistItems,
+  listClientPlaylistFolders
 } from '../api/client_playlist'
 import {
   refreshLibrary as apiRefreshLibrary,
@@ -42,8 +44,12 @@ export const useLibraryStore = defineStore('library', () => {
   const keyword = ref('')
   // 各节点的播放列表：{ [nodeId]: playlists[] }
   const nodePlaylists = ref({})
+  // 各节点的文件夹：{ [nodeId]: folders[] }
+  const nodeFolders = ref({})
   // 客户端播放列表（eta_web 后端）
   const clientPlaylists = ref([])
+  // 客户端文件夹
+  const clientFolders = ref([])
 
   const tracks = ref([]) // 当前展示的曲目
   const tracksTotal = ref(0)
@@ -73,7 +79,7 @@ export const useLibraryStore = defineStore('library', () => {
   }
 
   /**
-   * 刷新所有节点的播放列表 + 客户端播放列表
+   * 刷新所有节点的播放列表 + 客户端播放列表（含文件夹）
    * - 在线节点：直调节点 API
    * - 离线节点：读访问端缓存（置灰展示）
    */
@@ -82,22 +88,27 @@ export const useLibraryStore = defineStore('library', () => {
     const onlineNodes = allNodes.filter((n) => !!n.token)
     const offlineNodes = allNodes.filter((n) => !n.token)
 
-    // 在线节点：直调节点 API
+    // 在线节点：同时拉取播放列表和文件夹
     const onlineResults = await Promise.allSettled(
       onlineNodes.map(async (n) => {
-        const data = await getPlaylists(n)
+        const [data, folders] = await Promise.all([
+          getPlaylists(n),
+          getPlaylistFolders(n).catch(() => [])
+        ])
         const items = Array.isArray(data) ? data : data.items || []
-        return { nodeId: n.id, playlists: items }
+        return { nodeId: n.id, playlists: items, folders: folders || [] }
       })
     )
-    const map = {}
+    const playlistMap = {}
+    const folderMap = {}
     onlineResults.forEach((r) => {
       if (r.status === 'fulfilled') {
-        map[r.value.nodeId] = r.value.playlists
+        playlistMap[r.value.nodeId] = r.value.playlists
+        folderMap[r.value.nodeId] = r.value.folders
       }
     })
 
-    // 离线节点：读缓存（如有）
+    // 离线节点：读缓存（如有）— 缓存不含文件夹结构，离线节点文件夹置空
     if (offlineNodes.length > 0) {
       try {
         const cached = await getCachedPlaylists()
@@ -116,7 +127,7 @@ export const useLibraryStore = defineStore('library', () => {
         }
         for (const n of offlineNodes) {
           if (byNode.has(n.id)) {
-            map[n.id] = byNode.get(n.id)
+            playlistMap[n.id] = byNode.get(n.id)
           }
         }
       } catch (e) {
@@ -125,14 +136,21 @@ export const useLibraryStore = defineStore('library', () => {
       }
     }
 
-    nodePlaylists.value = map
+    nodePlaylists.value = playlistMap
+    nodeFolders.value = folderMap
 
-    // 拉取客户端播放列表
+    // 拉取客户端播放列表 + 文件夹
     try {
-      clientPlaylists.value = await listClientPlaylists()
+      const [pls, folders] = await Promise.all([
+        listClientPlaylists(),
+        listClientPlaylistFolders().catch(() => [])
+      ])
+      clientPlaylists.value = pls
+      clientFolders.value = folders || []
     } catch (e) {
       toast.error('获取客户端播放列表失败', e)
       clientPlaylists.value = []
+      clientFolders.value = []
     }
   }
 
@@ -589,7 +607,9 @@ export const useLibraryStore = defineStore('library', () => {
   return {
     keyword,
     nodePlaylists,
+    nodeFolders,
     clientPlaylists,
+    clientFolders,
     tracks,
     tracksTotal,
     loading,

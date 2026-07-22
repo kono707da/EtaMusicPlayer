@@ -6,6 +6,8 @@
 支持两种导入模式：
 1. 单个 m3u 文件：导入为一个播放列表（名称可自定义）
 2. 文件夹递归：递归查找所有 m3u，每个 m3u 创建一个独立播放列表（名为 m3u 文件名）
+   1.5.0 起：文件夹模式下保留 m3u 相对于导入根目录的层级关系，
+   自动创建 PlaylistFolder 树，播放列表放到对应文件夹下。
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from eta_node.models import NodeTask, Playlist, PlaylistItem, Track, User, WatchDir
+from eta_node.models import NodeTask, Playlist, PlaylistFolder, PlaylistItem, Track, User, WatchDir
 from eta_node.scanner import scan_directory
 from eta_node.task_executor import write_audit_log
 from eta_node.versioning import bump_version, ENTITY_PLAYLISTS
@@ -55,29 +57,77 @@ def _parse_m3u(m3u_path: str) -> list[str]:
     return entries
 
 
-def _collect_m3u_files(payload: dict) -> list[tuple[str, str]]:
-    """收集要导入的 m3u 文件，返回 [(m3u_path, playlist_name), ...]
+def _collect_m3u_files(payload: dict) -> list[tuple[str, str, list[str]]]:
+    """收集要导入的 m3u 文件，返回 [(m3u_path, playlist_name, folder_parts), ...]
 
-    文件夹模式：每个 m3u 用其文件名（去扩展名）作为播放列表名
-    单文件模式：用 payload.playlist_name 或 m3u 文件名
+    folder_parts 是 m3u 相对于导入根目录的父目录路径组件列表（不含 m3u 文件名）。
+    例如导入根 /Music，m3u 在 /Music/Artist1/Album1/playlist.m3u，
+    则 folder_parts = ["Artist1", "Album1"]。
+
+    单文件模式 folder_parts = []。
     """
-    result: list[tuple[str, str]] = []
+    result: list[tuple[str, str, list[str]]] = []
     folder = payload.get("folder_path")
     single = payload.get("m3u_path")
     custom_name = (payload.get("playlist_name") or "").strip()
 
     if folder:
-        root = Path(folder)
+        root = Path(folder).resolve()
         if root.exists() and root.is_dir():
             for m3u in sorted(root.rglob("*")):
                 if m3u.is_file() and m3u.suffix.lower() in M3U_EXTS:
-                    result.append((str(m3u), m3u.stem))
+                    # 计算相对于 root 的父目录路径
+                    rel_parent = m3u.parent.relative_to(root)
+                    if str(rel_parent) == ".":
+                        folder_parts: list[str] = []
+                    else:
+                        folder_parts = [p for p in rel_parent.parts if p]
+                    result.append((str(m3u), m3u.stem, folder_parts))
     elif single:
         p = Path(single)
         if p.exists() and p.is_file() and p.suffix.lower() in M3U_EXTS:
             name = custom_name or p.stem
-            result.append((str(p), name))
+            result.append((str(p), name, []))
     return result
+
+
+def _ensure_folder_path(
+    db: Session, folder_parts: list[str], owner_id: int,
+    root_parent_id: Optional[int] = None,
+) -> Optional[int]:
+    """按 folder_parts 逐级创建文件夹，返回最内层文件夹 id
+
+    folder_parts 为空时返回 root_parent_id（可能是 None=根级 或 指定文件夹 id）。
+    root_parent_id 非空时，导入的层级根挂在此文件夹下（用于"导入到指定文件夹"场景）。
+    同级同名文件夹复用（不重复创建）。
+    """
+    if not folder_parts:
+        return root_parent_id
+
+    parent_id: Optional[int] = root_parent_id
+    for name in folder_parts:
+        existing = (
+            db.query(PlaylistFolder)
+            .filter(
+                PlaylistFolder.name == name,
+                PlaylistFolder.parent_id == parent_id if parent_id is not None else PlaylistFolder.parent_id.is_(None),
+                PlaylistFolder.owner_id == owner_id,
+                PlaylistFolder.deleted_at.is_(None),
+            )
+            .first()
+        )
+        if existing:
+            parent_id = existing.id
+        else:
+            folder = PlaylistFolder(
+                name=name,
+                parent_id=parent_id,
+                owner_id=owner_id,
+            )
+            db.add(folder)
+            db.flush()
+            parent_id = folder.id
+    return parent_id
 
 
 def _unique_target(watch_dir_path: str, filename: str) -> Path:
@@ -116,6 +166,7 @@ def handle_import_m3u(
         watch_dir_id: int          目标监控目录 ID
         mode: str                  "copy" | "move"
         playlist_name: str         播放列表名（仅单个 m3u 模式生效）
+        target_folder_id: int | None  目标文件夹 ID（导入的播放列表/层级挂在此文件夹下）
     """
     if not payload:
         raise ValueError("缺少导入参数")
@@ -135,14 +186,26 @@ def handle_import_m3u(
 
     owner_id = _resolve_owner_id(db, task.submitted_by)
 
+    # 校验目标文件夹（如果指定）
+    target_folder_id = payload.get("target_folder_id")
+    if target_folder_id is not None:
+        target_folder = db.get(PlaylistFolder, target_folder_id)
+        if target_folder is None or target_folder.deleted_at is not None:
+            raise ValueError(f"目标文件夹不存在: {target_folder_id}")
+        if target_folder.owner_id != owner_id:
+            # admin 可操作所有用户文件夹，非 admin 仅能操作自己的
+            user = db.query(User).filter(User.id == owner_id).first()
+            if not user or not user.is_admin:
+                raise ValueError("无权操作目标文件夹")
+
     # ---- 阶段 1：解析所有 m3u 并复制/移动音频文件 ----
-    # m3u_path -> (playlist_name, [(filename_in_watch_dir, abs_path), ...])
-    m3u_entries: dict[str, tuple[str, list[tuple[str, str]]]] = {}
+    # m3u_path -> (playlist_name, folder_parts, [(filename_in_watch_dir, abs_path), ...])
+    m3u_entries: dict[str, tuple[str, list[str], list[tuple[str, str]]]] = {}
     total_files = 0
     copied = 0
     failed: list[str] = []
 
-    for m3u_path, pl_name in m3u_files:
+    for m3u_path, pl_name, folder_parts in m3u_files:
         audio_paths = _parse_m3u(m3u_path)
         file_list: list[tuple[str, str]] = []
         for src_path in audio_paths:
@@ -165,7 +228,7 @@ def handle_import_m3u(
             if total_files % 20 == 0 or total_files == len(audio_paths):
                 task.progress = min(50, int(copied / max(total_files, 1) * 50))
                 db.flush()
-        m3u_entries[m3u_path] = (pl_name, file_list)
+        m3u_entries[m3u_path] = (pl_name, folder_parts, file_list)
 
     # ---- 阶段 2：扫描入库 ----
     task.progress = 55
@@ -180,13 +243,17 @@ def handle_import_m3u(
     db.flush()
 
     # ---- 阶段 3：按 m3u 顺序创建播放列表并添加曲目 ----
+    # 文件夹模式下，按 m3u 相对路径创建 PlaylistFolder 层级
+    # target_folder_id 非空时，导入的层级根挂在该文件夹下
     playlists_created = []
-    for m3u_path, (pl_name, file_list) in m3u_entries.items():
+    for m3u_path, (pl_name, folder_parts, file_list) in m3u_entries.items():
+        folder_id = _ensure_folder_path(db, folder_parts, owner_id, root_parent_id=target_folder_id)
         pl = Playlist(
             name=pl_name,
             owner_id=owner_id,
             is_system=False,
             description=f"从 {Path(m3u_path).name} 导入",
+            folder_id=folder_id,
         )
         db.add(pl)
         db.flush()

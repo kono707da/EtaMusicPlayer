@@ -29,6 +29,7 @@ from eta_node.routers import (
     inbox,
     metadata,
     permissions,
+    playlist_folders,
     playlists,
     quality,
     scan,
@@ -72,6 +73,22 @@ def bootstrap() -> None:
             migrate_db_121.ensure_columns(_engine)
         except Exception as _e:
             logger.warning("migrate_db_121 调用失败（可忽略，新库本就有列）: %s", _e)
+    except Exception:
+        pass
+
+    # 0b. 1.5.0 迁移：新增 playlist_folders 表 + playlists.folder_id 列（幂等）
+    try:
+        from eta_node.database import engine as _engine
+        import sys
+        import os
+        _node_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if _node_dir not in sys.path:
+            sys.path.insert(0, _node_dir)
+        try:
+            import migrate_db_150
+            migrate_db_150.ensure_columns(_engine)
+        except Exception as _e:
+            logger.warning("migrate_db_150 调用失败（可忽略，新库本就有列）: %s", _e)
     except Exception:
         pass
 
@@ -185,6 +202,7 @@ def create_local_node_app() -> FastAPI:
     sub_app.include_router(auth.router)
     sub_app.include_router(tracks.router)
     sub_app.include_router(playlists.router)
+    sub_app.include_router(playlist_folders.router)
     sub_app.include_router(watch_dirs.router)
     sub_app.include_router(scan.router)
     sub_app.include_router(upload.router)

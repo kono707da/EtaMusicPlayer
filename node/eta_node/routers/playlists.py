@@ -137,6 +137,7 @@ def _playlist_to_out(db: Session, p: Playlist) -> PlaylistOut:
         owner_id=p.owner_id,
         is_system=p.is_system,
         description=p.description,
+        folder_id=p.folder_id,
         created_at=p.created_at,
         updated_at=p.updated_at,
         track_count=count,
@@ -160,11 +161,21 @@ def create_playlist(
     user: User = Depends(get_current_user_dependency),
 ) -> PlaylistOut:
     """创建播放列表"""
+    # 校验 folder_id
+    folder_id = payload.folder_id
+    if folder_id is not None:
+        from eta_node.models import PlaylistFolder
+        folder = db.get(PlaylistFolder, folder_id)
+        if folder is None or folder.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="文件夹不存在")
+        if folder.owner_id != user.id and not user.is_admin:
+            raise HTTPException(status_code=403, detail="无权在该文件夹下创建播放列表")
     pl = Playlist(
         name=payload.name,
         owner_id=user.id,
         is_system=False,
         description=payload.description,
+        folder_id=folder_id,
     )
     db.add(pl)
     bump_version(db, ENTITY_PLAYLISTS)
@@ -240,6 +251,17 @@ def update_playlist(
             pl.name = payload.name
         if payload.description is not None:
             pl.description = payload.description
+        if payload.folder_id is not None:
+            # 0 表示移到根级
+            new_folder_id = None if payload.folder_id == 0 else payload.folder_id
+            if new_folder_id is not None:
+                from eta_node.models import PlaylistFolder
+                folder = db.get(PlaylistFolder, new_folder_id)
+                if folder is None or folder.deleted_at is not None:
+                    raise HTTPException(status_code=404, detail="文件夹不存在")
+                if folder.owner_id != user.id and not user.is_admin:
+                    raise HTTPException(status_code=403, detail="无权移动到该文件夹")
+            pl.folder_id = new_folder_id
     bump_and_stamp(db, ENTITY_PLAYLISTS, [pl])
     db.commit()
     db.refresh(pl)

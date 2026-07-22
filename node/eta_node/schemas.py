@@ -69,11 +69,13 @@ class PaginatedTracks(BaseModel):
 class PlaylistCreate(BaseModel):
     name: str
     description: Optional[str] = None
+    folder_id: Optional[int] = None
 
 
 class PlaylistUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    folder_id: Optional[int] = None
 
 
 class PlaylistOut(BaseModel):
@@ -82,6 +84,7 @@ class PlaylistOut(BaseModel):
     owner_id: int
     is_system: bool
     description: Optional[str] = None
+    folder_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     track_count: int = 0
@@ -110,6 +113,28 @@ class AddTracksRequest(BaseModel):
 class ReorderRequest(BaseModel):
     track_id: int
     new_position: int
+
+
+# ----------------------------- PlaylistFolders -----------------------------
+class PlaylistFolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+
+
+class PlaylistFolderUpdate(BaseModel):
+    name: Optional[str] = None
+    parent_id: Optional[int] = None
+
+
+class PlaylistFolderOut(BaseModel):
+    id: int
+    name: str
+    parent_id: Optional[int] = None
+    owner_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
 
 
 # ----------------------------- WatchDirs -----------------------------

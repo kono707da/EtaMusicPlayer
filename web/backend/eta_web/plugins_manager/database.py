@@ -95,6 +95,17 @@ def _auto_migrate() -> None:
                 "ALTER TABLE plugins ADD COLUMN dependencies TEXT DEFAULT '[]' NOT NULL"
             )
             conn.commit()
+
+        # client_playlists.folder_id（1.5.0 新增）
+        cp_cols = {row[1] for row in conn.execute("PRAGMA table_info(client_playlists)")}
+        if "folder_id" not in cp_cols:
+            conn.execute(
+                "ALTER TABLE client_playlists ADD COLUMN folder_id INTEGER REFERENCES client_playlist_folders(id) ON DELETE SET NULL"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS ix_client_playlists_folder_id ON client_playlists(folder_id)"
+            )
+            conn.commit()
     except sqlite3.OperationalError:
         pass  # 表不存在，create_all 会处理
     finally:

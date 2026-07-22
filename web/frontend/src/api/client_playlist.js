@@ -20,8 +20,12 @@ export async function listClientPlaylists() {
 }
 
 // 创建客户端播放列表
-export async function createClientPlaylist(name, description = '') {
-  const resp = await client.post('/api/client-playlists', { name, description })
+export async function createClientPlaylist(name, description = '', folderId = null) {
+  const resp = await client.post('/api/client-playlists', {
+    name,
+    description,
+    folder_id: folderId
+  })
   return resp.data
 }
 
@@ -84,5 +88,34 @@ export async function reorderClientPlaylistItem(playlistId, itemId, newPosition)
     item_id: itemId,
     new_position: newPosition
   })
+  return resp.data
+}
+
+// ===== 客户端文件夹 CRUD（1.5.0+） =====
+
+// 列出所有客户端文件夹（扁平列表）
+export async function listClientPlaylistFolders() {
+  const resp = await client.get('/api/client-playlist-folders')
+  return resp.data
+}
+
+// 创建文件夹 { name, parent_id }
+export async function createClientPlaylistFolder(name, parentId = null) {
+  const resp = await client.post('/api/client-playlist-folders', {
+    name,
+    parent_id: parentId
+  })
+  return resp.data
+}
+
+// 更新文件夹（重命名/移动）{ name?, parent_id? }
+export async function updateClientPlaylistFolder(id, data) {
+  const resp = await client.put(`/api/client-playlist-folders/${id}`, data)
+  return resp.data
+}
+
+// 递归删除文件夹（含子文件夹和播放列表）
+export async function deleteClientPlaylistFolder(id) {
+  const resp = await client.delete(`/api/client-playlist-folders/${id}`)
   return resp.data
 }
