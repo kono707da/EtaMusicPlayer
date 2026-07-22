@@ -7,12 +7,12 @@
 const { ref, computed, onMounted, watch } = window.__etamusic.vue
 const { useRoute, useRouter } = window.__etamusic.vueRouter
 const {
-  ArrowLeft, Music, Loader2, Play, Plus, Clock, ListMusic, AlertCircle
+  ArrowLeft, Music, Loader2, Play, Plus, Clock, ListMusic, AlertCircle, Download
 } = window.__etamusic.icons
 const { Button, Badge, Empty, useToast } = window.__etamusic.ui
 const { usePlayerStore } = window.__etamusic.stores
 
-import { getPlaylistDetail, buildPlayableTracks } from '../api'
+import { getPlaylistDetail, buildPlayableTracks, downloadSongs } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,6 +28,8 @@ const songs = ref([])
 const loading = ref(false)
 const playingAll = ref(false)
 const preparingIds = ref(new Set())
+const downloadingIds = ref(new Set())
+const downloadingAll = ref(false)
 
 const hasSongs = computed(() => songs.value.length > 0)
 
@@ -124,6 +126,40 @@ async function appendSong(song) {
     toast.error('加入队列失败：' + (e.message || '未知错误'))
   } finally {
     preparingIds.value.delete(song.id)
+  }
+}
+
+/**
+ * 下载单首歌曲
+ */
+async function downloadSong(song) {
+  if (downloadingIds.value.has(song.id)) return
+  downloadingIds.value.add(song.id)
+  try {
+    const result = await downloadSongs([song.id], { level: 'exhigh' })
+    toast.success(result.message || '下载任务已创建')
+  } catch (e) {
+    toast.error('下载失败：' + (e.message || '未知错误'))
+  } finally {
+    downloadingIds.value.delete(song.id)
+  }
+}
+
+/**
+ * 下载整个歌单（前 200 首）
+ */
+async function downloadAll() {
+  if (!hasSongs.value) return
+  downloadingAll.value = true
+  try {
+    const list = songs.value.slice(0, 200)
+    const ids = list.map((s) => s.id)
+    const result = await downloadSongs(ids, { level: 'exhigh' })
+    toast.success(result.message || '下载任务已创建')
+  } catch (e) {
+    toast.error('下载失败：' + (e.message || '未知错误'))
+  } finally {
+    downloadingAll.value = false
   }
 }
 
@@ -242,6 +278,16 @@ onMounted(() => {
           </p>
           <div class="flex items-center gap-2 mt-auto">
             <Button
+              variant="secondary"
+              size="sm"
+              :disabled="downloadingAll || !hasSongs"
+              @click="downloadAll"
+            >
+              <Loader2 v-if="downloadingAll" class="h-4 w-4 animate-spin" />
+              <Download v-else class="h-4 w-4" />
+              下载全部
+            </Button>
+            <Button
               variant="gold"
               size="sm"
               :disabled="playingAll || !hasSongs"
@@ -332,6 +378,17 @@ onMounted(() => {
 
             <!-- 操作按钮 -->
             <div class="flex items-center gap-1 shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                class="h-8 w-8 p-0"
+                :disabled="downloadingIds.has(song.id)"
+                title="下载"
+                @click.stop="downloadSong(song)"
+              >
+                <Loader2 v-if="downloadingIds.has(song.id)" class="h-4 w-4 animate-spin" />
+                <Download v-else class="h-4 w-4" />
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"

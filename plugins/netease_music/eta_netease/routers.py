@@ -574,3 +574,243 @@ def get_my_playlists():
         return api_playlist.user_playlist(uid)
     except Exception as e:
         raise _err(e, '获取我的歌单失败')
+
+
+# ===== 下载 =====
+
+class DownloadSongReq(BaseModel):
+    song_ids: list[int]
+    level: str = 'exhigh'
+    target_base_url: str = 'local_node'
+    target_watch_dir_id: int = 1
+    target_subdir: Optional[str] = None
+
+
+class DownloadPlaylistReq(BaseModel):
+    playlist_id: int
+    level: str = 'exhigh'
+    target_base_url: str = 'local_node'
+    target_watch_dir_id: int = 1
+    target_subdir: Optional[str] = None
+    song_ids: Optional[list[int]] = None  # 指定下载歌单中的部分歌曲
+
+
+@router.post('/download/songs')
+def post_download_songs(req: DownloadSongReq):
+    """下载多首歌曲到节点"""
+    _require_login()
+    from eta_netease.database import SessionLocal, init_db
+    from eta_netease.models import DownloadTask
+    from eta_netease.downloader import start_download_task
+
+    init_db()
+    if not req.song_ids:
+        raise HTTPException(status_code=400, detail='未指定歌曲')
+
+    # 获取歌曲详情
+    try:
+        detail_resp = api_search.song_detail(req.song_ids)
+    except Exception as e:
+        raise _err(e, '获取歌曲详情失败')
+
+    songs = []
+    for s in detail_resp.get('songs', []):
+        artists = s.get('ar', []) or s.get('artists', [])
+        artist_str = ' / '.join(a.get('name', '') for a in artists if a.get('name'))
+        songs.append({
+            'song_id': s.get('id'),
+            'name': s.get('name', ''),
+            'artist': artist_str,
+            'album': (s.get('al', {}) or {}).get('name', ''),
+            'album_pic': (s.get('al', {}) or {}).get('picUrl', ''),
+        })
+
+    if not songs:
+        raise HTTPException(status_code=400, detail='未找到歌曲信息')
+
+    db = SessionLocal()
+    try:
+        task = DownloadTask(
+            source_type='song',
+            source_title=songs[0].get('name', '批量下载'),
+            songs_json=songs,
+            selected_song_ids=None,
+            target_base_url=req.target_base_url,
+            target_watch_dir_id=req.target_watch_dir_id,
+            target_subdir=req.target_subdir,
+            level=req.level,
+            status='pending',
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        start_download_task(task.id)
+        return {'task_id': task.id, 'total': len(songs), 'message': f'已创建下载任务，共 {len(songs)} 首'}
+    finally:
+        db.close()
+
+
+@router.post('/download/playlist')
+def post_download_playlist(req: DownloadPlaylistReq):
+    """下载整个歌单或歌单中的指定歌曲"""
+    _require_login()
+    from eta_netease.database import SessionLocal, init_db
+    from eta_netease.models import DownloadTask
+    from eta_netease.downloader import start_download_task
+
+    init_db()
+
+    # 获取歌单信息
+    try:
+        pl_detail = api_playlist.playlist_detail(req.playlist_id)
+        pl_name = pl_detail.get('playlist', {}).get('name', f'歌单{req.playlist_id}')
+    except Exception:
+        pl_name = f'歌单{req.playlist_id}'
+
+    # 获取歌单全部曲目
+    try:
+        tracks_resp = api_playlist.playlist_track_all(req.playlist_id)
+    except Exception as e:
+        raise _err(e, '获取歌单曲目失败')
+
+    all_tracks = tracks_resp.get('songs', []) or tracks_resp.get('data', {}).get('songs', [])
+    if req.song_ids:
+        selected_set = set(req.song_ids)
+        all_tracks = [t for t in all_tracks if t.get('id') in selected_set]
+
+    if not all_tracks:
+        raise HTTPException(status_code=400, detail='歌单中未找到可下载的歌曲')
+
+    songs = []
+    for t in all_tracks:
+        artists = t.get('ar', []) or t.get('artists', [])
+        artist_str = ' / '.join(a.get('name', '') for a in artists if a.get('name'))
+        songs.append({
+            'song_id': t.get('id'),
+            'name': t.get('name', ''),
+            'artist': artist_str,
+            'album': (t.get('al', {}) or {}).get('name', ''),
+            'album_pic': (t.get('al', {}) or {}).get('picUrl', ''),
+        })
+
+    db = SessionLocal()
+    try:
+        task = DownloadTask(
+            source_type='playlist',
+            source_id=str(req.playlist_id),
+            source_title=pl_name,
+            songs_json=songs,
+            selected_song_ids=None,
+            target_base_url=req.target_base_url,
+            target_watch_dir_id=req.target_watch_dir_id,
+            target_subdir=req.target_subdir,
+            level=req.level,
+            status='pending',
+        )
+        db.add(task)
+        db.commit()
+        db.refresh(task)
+        start_download_task(task.id)
+        return {'task_id': task.id, 'total': len(songs), 'message': f'已创建下载任务: {pl_name}，共 {len(songs)} 首'}
+    finally:
+        db.close()
+
+
+@router.get('/download/tasks')
+def get_download_tasks(
+    status: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    """查询下载任务列表"""
+    from eta_netease.database import SessionLocal, init_db
+    from eta_netease.models import DownloadTask
+    from sqlalchemy import desc
+
+    init_db()
+    db = SessionLocal()
+    try:
+        q = db.query(DownloadTask)
+        if status:
+            q = q.filter(DownloadTask.status == status)
+        total = q.count()
+        tasks = q.order_by(desc(DownloadTask.created_at)).offset((page - 1) * size).limit(size).all()
+        return {
+            'total': total,
+            'page': page,
+            'size': size,
+            'items': [_task_to_dict(t) for t in tasks],
+        }
+    finally:
+        db.close()
+
+
+@router.get('/download/tasks/{task_id}')
+def get_download_task_detail(task_id: int):
+    """查询下载任务详情（含文件状态）"""
+    from eta_netease.database import SessionLocal, init_db
+    from eta_netease.models import DownloadTask, DownloadFileStatus
+
+    init_db()
+    db = SessionLocal()
+    try:
+        task = db.get(DownloadTask, task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail='任务不存在')
+        result = _task_to_dict(task)
+        files = (
+            db.query(DownloadFileStatus)
+            .filter(DownloadFileStatus.task_id == task_id)
+            .order_by(DownloadFileStatus.id)
+            .all()
+        )
+        result['files'] = [
+            {
+                'song_id': f.song_id,
+                'file_path': f.file_path,
+                'status': f.status,
+                'size': f.size,
+                'done': f.done,
+                'error': f.error,
+                'saved_to': f.saved_to,
+                'was_ncm': f.was_ncm,
+                'decrypted_format': f.decrypted_format,
+            }
+            for f in files
+        ]
+        return result
+    finally:
+        db.close()
+
+
+@router.post('/download/tasks/{task_id}/cancel')
+def post_cancel_download(task_id: int):
+    """取消下载任务"""
+    from eta_netease.downloader import cancel_download_task
+
+    ok = cancel_download_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=400, detail='任务不存在或已完成')
+    return {'detail': '任务已取消'}
+
+
+def _task_to_dict(task) -> dict:
+    return {
+        'id': task.id,
+        'source_type': task.source_type,
+        'source_id': task.source_id,
+        'source_title': task.source_title,
+        'status': task.status,
+        'total_files': task.total_files,
+        'completed_files': task.completed_files,
+        'skipped_files': task.skipped_files,
+        'failed_files': task.failed_files,
+        'current_file': task.current_file,
+        'current_file_size': task.current_file_size,
+        'current_file_done': task.current_file_done,
+        'error_message': task.error_message,
+        'level': task.level,
+        'created_at': task.created_at.isoformat() if task.created_at else None,
+        'updated_at': task.updated_at.isoformat() if task.updated_at else None,
+        'finished_at': task.finished_at.isoformat() if task.finished_at else None,
+    }

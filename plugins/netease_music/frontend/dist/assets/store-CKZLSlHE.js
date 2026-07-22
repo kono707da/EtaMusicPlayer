@@ -1,5 +1,5 @@
-import { m as S, q as _, v as m, x as w } from "./api-D4goXXVb.js";
-const { defineStore: h } = window.__etamusic.pinia, { ref: c, computed: s } = window.__etamusic.vue, y = h("netease", () => {
+import { q as S, v as _, x as m, y as w } from "./api-CJ1Y_yWo.js";
+const { defineStore: h } = window.__etamusic.pinia, { ref: c, computed: s } = window.__etamusic.vue, x = h("netease", () => {
   const e = c([]), u = c(null), a = s(
     () => e.value.find((n) => String(n.ncm_uid) === String(u.value)) || null
   ), l = s(() => !!a.value);
@@ -46,5 +46,5 @@ const { defineStore: h } = window.__etamusic.pinia, { ref: c, computed: s } = wi
   };
 });
 export {
-  y as u
+  x as u
 };

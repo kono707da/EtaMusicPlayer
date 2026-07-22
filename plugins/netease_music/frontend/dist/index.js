@@ -2,25 +2,25 @@ const { Music: e, Search: t, ListMusic: a, User: n } = window.__etamusic.icons, 
   {
     path: "/netease",
     name: "netease-account",
-    component: () => import("./assets/NeteaseAccountView-IWMZjmMq.js"),
+    component: () => import("./assets/NeteaseAccountView-CgZfVxnD.js"),
     meta: { title: "网易云账号" }
   },
   {
     path: "/netease/search",
     name: "netease-search",
-    component: () => import("./assets/NeteaseSearchView-BYeNNOsY.js"),
+    component: () => import("./assets/NeteaseSearchView-CCEyrd4U.js"),
     meta: { title: "网易云搜索" }
   },
   {
     path: "/netease/playlists",
     name: "netease-playlists",
-    component: () => import("./assets/NeteasePlaylistsView-LRVXfecN.js"),
+    component: () => import("./assets/NeteasePlaylistsView-Cliy93Uz.js"),
     meta: { title: "网易云歌单" }
   },
   {
     path: "/netease/playlist/:id",
     name: "netease-playlist-detail",
-    component: () => import("./assets/NeteasePlaylistDetailView-Ck3qEW9c.js"),
+    component: () => import("./assets/NeteasePlaylistDetailView-DOZwe9Y6.js"),
     meta: { title: "歌单详情" }
   }
 ], i = [

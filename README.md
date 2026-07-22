@@ -23,6 +23,7 @@
 - **多账号管理**：JSON 文件存储多个账号，免扫码切换；切换账号后之前账号克隆的资源仍可见可操作
 - **搜索**：关键字搜索歌曲 / 热门搜索 / 搜索建议
 - **歌曲**：歌曲详情、播放 URL、下载 URL、歌词（含翻译）
+- **下载**：单曲/批量/歌单下载到节点 watch_dir，支持 ncm 加密格式自动解密（AES-128-ECB + RC4 keystream），解密后自动写入元数据/封面
 - **推荐**：个性化歌单、新歌速递、每日推荐、历史推荐
 - **排行榜**：官方榜单列表与详情
 - **歌单管理**：查看 / 创建 / 删除 / 重命名歌单，添加 / 删除曲目，收藏歌单
@@ -30,7 +31,7 @@
 - **加密方案**：采用 eapi AES-128-ECB 加密（weapi 被风控拒绝 code=8821），PC 客户端伪装
 - **架构说明**：作为 eta_web 外部插件，在线访问与播放不依赖节点；下载/克隆功能需节点参与，与节点查重解耦（用户明确要求查重作为独立节点功能）
 
-> 实现参考 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 与 [YesPlayMusic](https://github.com/qier222/YesPlayMusic) 项目的加密逻辑，将核心 eapi/weapi 加密翻译为 Python，未部署外部 Node.js 服务。特此致谢。
+> 实现参考 [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) 与 [YesPlayMusic](https://github.com/qier222/YesPlayMusic) 项目的加密逻辑，将核心 eapi/weapi 加密翻译为 Python，未部署外部 Node.js 服务。NCM 解密算法参考 [音乐解锁DecrypeMusic](https://github.com/ix64/UnlockMusic) 项目从 worker.js 逆向得出。特此致谢。
 
 ### 系统特性
 - **单进程模式**：FastAPI 同时托管 API 与前端静态文件，一个端口、一个进程

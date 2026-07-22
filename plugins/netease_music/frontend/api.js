@@ -218,3 +218,52 @@ export async function buildPlayableTracks(songs, level = 'standard') {
     __source: 'netease'
   })).filter((t) => t.__streamUrl)
 }
+
+// ===== 下载 =====
+export async function downloadSongs(songIds, opts = {}) {
+  try {
+    const r = await client.post(`${BASE}/download/songs`, {
+      song_ids: songIds,
+      level: opts.level || 'exhigh',
+      target_base_url: opts.target_base_url || 'local_node',
+      target_watch_dir_id: opts.target_watch_dir_id || 1,
+      target_subdir: opts.target_subdir || null
+    }, { timeout: 30000 })
+    return r.data
+  } catch (e) { handleError(e, '创建下载任务失败') }
+}
+
+export async function downloadPlaylist(playlistId, opts = {}) {
+  try {
+    const r = await client.post(`${BASE}/download/playlist`, {
+      playlist_id: playlistId,
+      level: opts.level || 'exhigh',
+      target_base_url: opts.target_base_url || 'local_node',
+      target_watch_dir_id: opts.target_watch_dir_id || 1,
+      target_subdir: opts.target_subdir || null,
+      song_ids: opts.song_ids || null
+    }, { timeout: 30000 })
+    return r.data
+  } catch (e) { handleError(e, '创建下载任务失败') }
+}
+
+export async function getDownloadTasks(params = {}) {
+  try {
+    const r = await client.get(`${BASE}/download/tasks`, { params })
+    return r.data
+  } catch (e) { handleError(e, '获取下载任务失败') }
+}
+
+export async function getDownloadTaskDetail(taskId) {
+  try {
+    const r = await client.get(`${BASE}/download/tasks/${taskId}`)
+    return r.data
+  } catch (e) { handleError(e, '获取任务详情失败') }
+}
+
+export async function cancelDownloadTask(taskId) {
+  try {
+    const r = await client.post(`${BASE}/download/tasks/${taskId}/cancel`)
+    return r.data
+  } catch (e) { handleError(e, '取消任务失败') }
+}
