@@ -22,7 +22,8 @@ import {
 
 const props = defineProps({
   open: { type: Boolean, default: false },
-  group: { type: Object, default: null }
+  group: { type: Object, default: null },
+  folderId: { type: Number, default: null }
 })
 const emit = defineEmits(['update:open', 'created'])
 
@@ -33,6 +34,8 @@ const libraryStore = useLibraryStore()
 // 表单状态
 const playlistName = ref('')
 const submitting = ref(false)
+// 目标文件夹（0=根级，正整数=文件夹 id）
+const targetFolderId = ref(0)
 
 // m3u 导入相关
 const isNodeGroup = computed(() => props.group?.type === 'node-group')
@@ -62,6 +65,34 @@ const supportsM3uImport = computed(() => {
   return nodesStore.hasFeature(node.value.id, 'import_m3u')
 })
 
+/**
+ * 当前分组可选的文件夹列表（扁平），用于目标文件夹下拉框
+ * 返回 [{ id, name, pathDisplay }]
+ */
+const folderOptions = computed(() => {
+  let folders = []
+  if (isNodeGroup.value && props.group?.nodeId != null) {
+    folders = libraryStore.nodeFolders[props.group.nodeId] || []
+  } else {
+    folders = libraryStore.clientFolders || []
+  }
+  if (!folders.length) return []
+  // 构建 id -> folder 映射，计算路径显示
+  const byId = new Map(folders.map((f) => [f.id, f]))
+  function pathOf(f) {
+    const parts = []
+    let cur = f
+    const guard = new Set()
+    while (cur && !guard.has(cur.id)) {
+      guard.add(cur.id)
+      parts.unshift(cur.name)
+      cur = cur.parent_id != null ? byId.get(cur.parent_id) : null
+    }
+    return parts.join(' / ')
+  }
+  return folders.map((f) => ({ id: f.id, name: f.name, pathDisplay: pathOf(f) }))
+})
+
 const canSubmit = computed(() => {
   if (submitting.value) return false
   const name = playlistName.value.trim()
@@ -72,7 +103,6 @@ const canSubmit = computed(() => {
   if (!isNodeGroup.value) return false
   if (!watchDirId.value) return false
   if (!selectedPath.value) return false
-  // 文件夹模式下名字可留空（用 m3u 文件名）；单文件模式下名字可留空（用 m3u 文件名）
   return true
 })
 
@@ -92,6 +122,8 @@ watch(
       browserCurrentPath.value = ''
       browserDisplayPath.value = ''
       browserHistory.value = []
+      // 从 folderId prop 初始化目标文件夹（0=根级）
+      targetFolderId.value = props.folderId ?? 0
       if (isNodeGroup.value) {
         loadWatchDirs()
       }
@@ -197,6 +229,8 @@ function onSwitchFileMode(mode) {
 // ============ 提交 ============
 async function onSubmit() {
   const name = playlistName.value.trim()
+  // 0 → null（根级）
+  const folderId = targetFolderId.value === 0 ? null : targetFolderId.value
   if (importMode.value === 'blank') {
     if (!name) {
       toast.warning('请输入播放列表名称')
@@ -209,9 +243,13 @@ async function onSubmit() {
           toast.error('节点未登录，无法创建')
           return
         }
-        await createPlaylist(node.value, { name, description: '' })
+        await createPlaylist(node.value, {
+          name,
+          description: '',
+          folder_id: folderId
+        })
       } else {
-        await createClientPlaylist(name, '')
+        await createClientPlaylist(name, '', folderId)
       }
       await libraryStore.refreshAllPlaylists()
       toast.success('已创建播放列表')
@@ -246,7 +284,8 @@ async function onSubmit() {
   const payload = {
     watch_dir_id: watchDirId.value,
     mode: copyMode.value,
-    playlist_name: name || undefined
+    playlist_name: name || undefined,
+    target_folder_id: folderId ?? undefined
   }
   if (fileMode.value === 'single') {
     payload.m3u_path = selectedPath.value
@@ -291,6 +330,35 @@ function onCancel() {
           placeholder="留空将使用 m3u 文件名（m3u 导入模式）"
           :disabled="submitting"
         />
+      </div>
+
+      <!-- 目标文件夹 -->
+      <div class="space-y-1.5">
+        <Label>目标文件夹</Label>
+        <Select v-model="targetFolderId" :disabled="submitting">
+          <SelectTrigger class="w-full">
+            <SelectValue placeholder="根级（无文件夹）" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem :value="0">根级（无文件夹）</SelectItem>
+            <SelectItem
+              v-for="f in folderOptions"
+              :key="f.id"
+              :value="f.id"
+            >
+              {{ f.pathDisplay }}
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <p v-if="folderOptions.length === 0" class="text-xs text-muted-foreground">
+          暂无文件夹，播放列表将创建在根级
+        </p>
+        <p
+          v-if="importMode === 'm3u' && fileMode === 'folder' && targetFolderId !== 0"
+          class="text-xs text-muted-foreground"
+        >
+          文件夹导入将保留 m3u 相对层级，并挂在此目标文件夹下
+        </p>
       </div>
 
       <!-- 节点分组：可选 m3u 导入 -->
@@ -417,7 +485,7 @@ function onCancel() {
           </div>
 
           <p class="text-xs text-muted-foreground">
-            提示：导入后将保留 m3u 原始顺序创建播放列表。文件夹模式下，每个 m3u 文件创建一个独立播放列表（名为 m3u 文件名）。
+            提示：导入后按 m3u 原始顺序创建播放列表。文件夹模式下保留 m3u 相对目录层级（自动创建同名文件夹），每个 m3u 创建一个独立播放列表。
           </p>
         </div>
       </div>

@@ -133,6 +133,36 @@ export async function deletePlaylist(node, playlistId) {
   return resp.data
 }
 
+// ===== 节点侧播放列表文件夹 CRUD（1.5.0+） =====
+
+// 列出节点所有文件夹（扁平列表）
+export async function getPlaylistFolders(node) {
+  const client = createNodeClient(node)
+  const resp = await client.get('/api/playlist-folders')
+  return resp.data
+}
+
+// 创建文件夹 { name, parent_id }
+export async function createPlaylistFolder(node, payload) {
+  const client = createNodeClient(node)
+  const resp = await client.post('/api/playlist-folders', payload)
+  return resp.data
+}
+
+// 更新文件夹（重命名/移动）{ name?, parent_id? }
+export async function updatePlaylistFolder(node, folderId, payload) {
+  const client = createNodeClient(node)
+  const resp = await client.put(`/api/playlist-folders/${folderId}`, payload)
+  return resp.data
+}
+
+// 递归删除文件夹（含子文件夹和播放列表）
+export async function deletePlaylistFolder(node, folderId) {
+  const client = createNodeClient(node)
+  const resp = await client.delete(`/api/playlist-folders/${folderId}`)
+  return resp.data
+}
+
 // 向播放列表批量添加曲目
 export async function addTracksToPlaylist(node, playlistId, trackIds) {
   const client = createNodeClient(node)

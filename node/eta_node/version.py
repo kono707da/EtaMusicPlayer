@@ -18,7 +18,9 @@ from __future__ import annotations
 #        被其他程序占用报错退出（新增 eta_node.port_manager 模块）
 # 1.2.3: 新增播放完成判定配置——区分音乐/广播剧，按曲目时长应用不同完成百分比，
 #        GET/PUT /api/settings/playback；新增 PlaybackSettings 表（单行，id=1）
-NODE_VERSION = "1.2.3"
+# 1.3.0: 播放列表文件夹——新增 PlaylistFolder 自引用树形模型 + /api/playlist-folders CRUD，
+#        Playlist 加 folder_id 外键，m3u 文件夹导入保留相对目录层级（自动创建同名文件夹）
+NODE_VERSION = "1.3.0"
 
 # API 协议主版本
 # 当客户端的 CLIENT_API_VERSION 与此值不一致时，视为完全不兼容，

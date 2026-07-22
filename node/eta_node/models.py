@@ -120,6 +120,45 @@ class Track(Base):
     )
 
 
+class PlaylistFolder(Base):
+    """播放列表文件夹（树形组织容器）
+
+    parent_id=NULL 表示根级文件夹。
+    owner_id 用于隔离不同用户的文件夹视图。
+    """
+
+    __tablename__ = "playlist_folders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    parent_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("playlist_folders.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False
+    )
+    # 软删除标记：与 Playlist.deleted_at 同理
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    # 版本戳：与 Playlist.version_stamp 同理
+    version_stamp: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
+
+    parent: Mapped[Optional["PlaylistFolder"]] = relationship(
+        "PlaylistFolder",
+        remote_side="PlaylistFolder.id",
+        back_populates="children",
+    )
+    children: Mapped[list["PlaylistFolder"]] = relationship(
+        "PlaylistFolder",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        order_by="PlaylistFolder.name",
+    )
+
+
 class Playlist(Base):
     """播放列表"""
 
@@ -132,6 +171,10 @@ class Playlist(Base):
     )
     is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # 所属文件夹（NULL=根级），文件夹删除时通过代码递归处理，这里不加 CASCADE 以便软删除
+    folder_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("playlist_folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False

@@ -31,6 +31,7 @@ class PlaylistOut(BaseModel):
     name: str
     description: str
     is_system: bool
+    folder_id: int | None = None
     item_count: int
     created_at: str
     updated_at: str
@@ -39,11 +40,13 @@ class PlaylistOut(BaseModel):
 class PlaylistCreate(BaseModel):
     name: str
     description: str = ""
+    folder_id: int | None = None
 
 
 class PlaylistUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    folder_id: int | None = None
 
 
 class ItemOut(BaseModel):
@@ -100,6 +103,7 @@ def _playlist_to_out(pl: ClientPlaylist) -> PlaylistOut:
         name=pl.name,
         description=pl.description or "",
         is_system=pl.is_system,
+        folder_id=pl.folder_id,
         item_count=len(pl.items) if pl.items else 0,
         created_at=pl.created_at.isoformat() if pl.created_at else "",
         updated_at=pl.updated_at.isoformat() if pl.updated_at else "",
@@ -134,7 +138,13 @@ def list_playlists(db: Session = Depends(get_db)) -> list[PlaylistOut]:
 @router.post("", response_model=PlaylistOut, status_code=201)
 def create_playlist(payload: PlaylistCreate, db: Session = Depends(get_db)) -> PlaylistOut:
     """创建客户端播放列表"""
-    pl = ClientPlaylist(name=payload.name, description=payload.description)
+    folder_id = payload.folder_id
+    if folder_id is not None:
+        from eta_web.client_playlists.models import ClientPlaylistFolder
+        folder = db.get(ClientPlaylistFolder, folder_id)
+        if folder is None:
+            raise HTTPException(status_code=404, detail="文件夹不存在")
+    pl = ClientPlaylist(name=payload.name, description=payload.description, folder_id=folder_id)
     db.add(pl)
     db.commit()
     db.refresh(pl)
@@ -156,6 +166,15 @@ def update_playlist(
         pl.name = payload.name
     if payload.description is not None:
         pl.description = payload.description
+    if payload.folder_id is not None:
+        # 0 表示移到根级
+        new_folder_id = None if payload.folder_id == 0 else payload.folder_id
+        if new_folder_id is not None:
+            from eta_web.client_playlists.models import ClientPlaylistFolder
+            folder = db.get(ClientPlaylistFolder, new_folder_id)
+            if folder is None:
+                raise HTTPException(status_code=404, detail="文件夹不存在")
+        pl.folder_id = new_folder_id
     db.commit()
     db.refresh(pl)
     return _playlist_to_out(pl)

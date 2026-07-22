@@ -1,11 +1,13 @@
 """客户端播放列表 ORM 模型
 
+ClientPlaylistFolder: 客户端播放列表文件夹（树形组织容器）
 ClientPlaylist: 客户端播放列表（不属于任何节点）
 ClientPlaylistItem: 播放列表曲目项（缓存元数据，支持跨节点）
 """
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -17,11 +19,44 @@ def _now() -> datetime:
     return datetime.utcnow()
 
 
+class ClientPlaylistFolder(Base):
+    """客户端播放列表文件夹（树形组织容器）
+
+    parent_id=NULL 表示根级文件夹。
+    客户端文件夹是全局的（不属于任何节点或用户）。
+    """
+
+    __tablename__ = "client_playlist_folders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    parent_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("client_playlist_folders.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False
+    )
+
+    parent: Mapped[Optional["ClientPlaylistFolder"]] = relationship(
+        "ClientPlaylistFolder",
+        remote_side="ClientPlaylistFolder.id",
+        back_populates="children",
+    )
+    children: Mapped[list["ClientPlaylistFolder"]] = relationship(
+        "ClientPlaylistFolder",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+        order_by="ClientPlaylistFolder.name",
+    )
+
+
 class ClientPlaylist(Base):
     """客户端播放列表
 
     不属于任何节点，可跨节点添加曲目。
     is_system=True 的列表（如"全部音乐"）不可删除。
+    folder_id=NULL 表示根级。
     """
 
     __tablename__ = "client_playlists"
@@ -30,6 +65,9 @@ class ClientPlaylist(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(String(1024), default="", nullable=False)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    folder_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("client_playlist_folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False
