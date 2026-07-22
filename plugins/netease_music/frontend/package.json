@@ -1,6 +1,6 @@
 {
   "name": "etamusic-plugin-netease-frontend",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "网易云音乐插件前端 - EtaMusicPlayer",
   "private": true,
   "type": "module",
