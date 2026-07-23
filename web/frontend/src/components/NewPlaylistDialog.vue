@@ -183,12 +183,8 @@ function onClickEntry(entry) {
     }
     return
   }
-  if (fileMode.value === 'folder') {
-    // 文件夹模式：直接选中当前目录
-    selectedPath.value = entry.path
-    return
-  }
-  // 单文件模式：进入子目录
+  // 文件夹：进入子目录（单文件和文件夹模式都进入下级，
+  // 文件夹模式下通过「选择此文件夹」按钮确认当前目录作为目标）
   if (browserCurrentPath.value) browserHistory.value.push(browserCurrentPath.value)
   loadBrowserDir(entry.path)
 }
@@ -512,7 +508,7 @@ function onCancel() {
             点击 m3u 文件直接选中；点击文件夹进入下级。
           </template>
           <template v-else>
-            浏览到目标目录后点击「选择此文件夹」确认。
+            点击文件夹进入下级，到达目标目录后点「选择此文件夹」确认。
           </template>
         </DialogDescription>
       </DialogHeader>
@@ -547,7 +543,6 @@ function onCancel() {
             :key="entry.path"
             v-memo="[entry.path]"
             class="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent text-sm"
-            :class="fileMode === 'folder' && entry.path === selectedPath ? 'bg-primary/10' : ''"
             @click="onClickEntry(entry)"
           >
             <FileText
@@ -557,7 +552,7 @@ function onCancel() {
             <Folder v-else class="h-4 w-4 text-primary shrink-0" />
             <span class="truncate flex-1">{{ entry.name }}</span>
             <ArrowRight
-              v-if="!entry.is_file && fileMode === 'single'"
+              v-if="!entry.is_file"
               class="h-3.5 w-3.5 ml-auto text-muted-foreground shrink-0"
             />
           </li>
